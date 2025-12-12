@@ -14,3 +14,5 @@ Ce projet automatise l'extraction des médias d'un film pour faciliter la créat
 1. Clonez le repo et installez les dépendances :
    ```bash
    pip install -r requirements.txt
+
+2. Pré-requis : Installez FFmpeg (https://ffmpeg.org/) sur votre machine (nécessaire pour le traitement audio/vidéo).
