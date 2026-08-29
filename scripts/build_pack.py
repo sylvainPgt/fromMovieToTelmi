@@ -68,11 +68,86 @@ def build_notes(chapters: list[dict]) -> dict:
         if len(text) > 500:
             text = text[:497].rstrip() + "..."
         notes[f"s{index}"] = {
-            "title": f"Chapitre {index + 1}",
+            "title": chapter.get("title") or f"Chapitre {index + 1}",
             "notes": text,
             "color": NOTE_COLORS[index % len(NOTE_COLORS)],
         }
     return notes
+
+
+def create_pack(
+    chapters: list[dict], source_dir: Path, pack_dir: Path, title: str,
+    age: str = "5", category: str | None = None, description: str | None = None,
+    title_audio: Path | None = None,
+) -> dict:
+    """Écrit le pack complet sur le disque.
+
+    Retourne un compte rendu : chapitres sans image, et si title.mp3 est
+    resté un simple silence. Lève FileNotFoundError si un audio manque.
+    """
+    audios_dir = pack_dir / "audios"
+    images_dir = pack_dir / "images"
+    audios_dir.mkdir(parents=True, exist_ok=True)
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    missing_images: list[int] = []
+    for index, chapter in enumerate(chapters):
+        audio_source = source_dir / chapter["file"]
+        if not audio_source.is_file():
+            raise FileNotFoundError(
+                f"Audio manquant : {audio_source}. "
+                "Lancez d'abord la découpe pour produire les MP3."
+            )
+        shutil.copy2(audio_source, audios_dir / f"s{index}.mp3")
+
+        image_name = chapter.get("image") or (Path(chapter["file"]).stem + ".png")
+        image_source = source_dir / image_name
+        if image_source.is_file():
+            shutil.copy2(image_source, images_dir / f"s{index}.png")
+        else:
+            missing_images.append(index + 1)
+
+    (pack_dir / "nodes.json").write_text(
+        json.dumps(build_nodes(len(chapters)), indent=2) + "\n", encoding="utf-8"
+    )
+    (pack_dir / "notes.json").write_text(
+        json.dumps(build_notes(chapters), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    metadata = {
+        "title": title,
+        "uuid": str(uuid.uuid4()),
+        "image": "title.png",
+        "version": 2,
+        "age": str(age),
+    }
+    if category:
+        metadata["category"] = category
+    if description:
+        metadata["description"] = description
+    (pack_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    # Image de couverture : par défaut celle du premier chapitre
+    first_image = images_dir / "s0.png"
+    has_cover = first_image.is_file()
+    if has_cover:
+        shutil.copy2(first_image, pack_dir / "title.png")
+
+    silent_title = title_audio is None
+    if title_audio is not None:
+        shutil.copy2(title_audio, pack_dir / "title.mp3")
+    else:
+        make_silent_mp3(pack_dir / "title.mp3")
+
+    return {
+        "missing_images": missing_images,
+        "silent_title": silent_title,
+        "has_cover": has_cover,
+        "pack_dir": str(pack_dir),
+    }
 
 
 def main() -> None:
@@ -97,84 +172,35 @@ def main() -> None:
 
     if not args.manifest.is_file():
         sys.exit(f"Erreur : fichier introuvable : {args.manifest}")
+    if args.title_audio and not args.title_audio.is_file():
+        sys.exit(f"Erreur : fichier introuvable : {args.title_audio}")
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     chapters = manifest.get("chapters", [])
     if not chapters:
         sys.exit("Erreur : aucun chapitre trouvé dans le manifeste.")
 
-    source_dir = args.manifest.parent
-    pack_dir = args.output
-    audios_dir = pack_dir / "audios"
-    images_dir = pack_dir / "images"
-    audios_dir.mkdir(parents=True, exist_ok=True)
-    images_dir.mkdir(parents=True, exist_ok=True)
-
     print(f"Construction du pack « {args.title} » ({len(chapters)} chapitres)...")
+    try:
+        report = create_pack(
+            chapters, args.manifest.parent, args.output, args.title,
+            args.age, args.category, args.description, args.title_audio,
+        )
+    except FileNotFoundError as e:
+        sys.exit(f"Erreur : {e}")
 
-    missing_images = []
-    for index, chapter in enumerate(chapters):
-        audio_source = source_dir / chapter["file"]
-        if not audio_source.is_file():
-            sys.exit(
-                f"Erreur : audio manquant : {audio_source}\n"
-                "Lancez split_chapters.py sans --preview pour produire les MP3."
-            )
-        shutil.copy2(audio_source, audios_dir / f"s{index}.mp3")
-
-        image_name = chapter.get("image") or (Path(chapter["file"]).stem + ".png")
-        image_source = source_dir / image_name
-        if image_source.is_file():
-            shutil.copy2(image_source, images_dir / f"s{index}.png")
-        else:
-            missing_images.append(index + 1)
-
-    if missing_images:
-        print(f"\n⚠️  Images manquantes pour le(s) chapitre(s) "
-              f"{', '.join(str(n) for n in missing_images)}.")
+    if report["missing_images"]:
+        print("\n⚠️  Images manquantes pour le(s) chapitre(s) "
+              f"{', '.join(str(n) for n in report['missing_images'])}.")
         print("   Lancez extract_chapter_images.py, ou déposez vous-même des "
               "PNG 640x480 dans le dossier images/ du pack.")
-
-    (pack_dir / "nodes.json").write_text(
-        json.dumps(build_nodes(len(chapters)), indent=2) + "\n", encoding="utf-8"
-    )
-    (pack_dir / "notes.json").write_text(
-        json.dumps(build_notes(chapters), indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-
-    metadata = {
-        "title": args.title,
-        "uuid": str(uuid.uuid4()),
-        "image": "title.png",
-        "version": 2,
-        "age": args.age,
-    }
-    if args.category:
-        metadata["category"] = args.category
-    if args.description:
-        metadata["description"] = args.description
-    (pack_dir / "metadata.json").write_text(
-        json.dumps(metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-
-    # Image de couverture : par défaut celle du premier chapitre
-    first_image = images_dir / "s0.png"
-    if first_image.is_file():
-        shutil.copy2(first_image, pack_dir / "title.png")
-    else:
+    if not report["has_cover"]:
         print("⚠️  Pas de title.png : ajoutez une image de couverture 640x480.")
-
-    if args.title_audio:
-        if not args.title_audio.is_file():
-            sys.exit(f"Erreur : fichier introuvable : {args.title_audio}")
-        shutil.copy2(args.title_audio, pack_dir / "title.mp3")
-    else:
-        make_silent_mp3(pack_dir / "title.mp3")
+    if report["silent_title"]:
         print("ℹ️  title.mp3 est un silence d'une seconde. Remplacez-le par un "
               "enregistrement du titre, ou passez --title-audio.")
 
-    print(f"\nPack écrit dans '{pack_dir}'.")
+    print(f"\nPack écrit dans '{args.output}'.")
     print("Copiez ce dossier dans vos histoires via Telmi Sync.")
 
 

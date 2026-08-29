@@ -38,6 +38,17 @@ def format_time(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}"
 
 
+def cut_label(quality: float) -> str:
+    """Décrit en un mot où tombe une coupe, d'après sa qualité."""
+    if quality >= 0.6:
+        return "franche"
+    if quality > 0.0:
+        return "correcte"
+    if quality == 0.0:
+        return "arbitraire"
+    return "sur une réplique !"
+
+
 def build_candidates(
     duration: float,
     silences: list[tuple[float, float]],
@@ -138,6 +149,53 @@ def choose_cuts(
     return chosen
 
 
+def plan_chapters(
+    duration: float,
+    silences: list[tuple[float, float]],
+    speech: list[tuple[float, float, str]],
+    target: float,
+    tolerance: float = 0.5,
+    boundary_weight: float = 0.25,
+) -> list[dict]:
+    """Calcule le découpage complet et retourne la liste des chapitres.
+
+    Opération purement arithmétique : une fois les silences détectés, on peut
+    la relancer autant de fois qu'on veut pour ajuster les réglages.
+    """
+    candidates = build_candidates(
+        duration, silences, speech,
+        # Assez serré pour toujours offrir un repli, assez large pour que deux
+        # points de repli ne se confondent pas
+        grid_step=max(target / 4, 2 * MERGE_DISTANCE),
+    )
+    cuts = choose_cuts(
+        duration, candidates, target,
+        min_length=target * (1 - tolerance),
+        max_length=target * (1 + tolerance),
+        boundary_weight=boundary_weight,
+    )
+    if not cuts:
+        return []
+
+    chapters = []
+    for index in range(len(cuts) - 1):
+        start, quality = cuts[index]
+        end = cuts[index + 1][0]
+        # Le premier chapitre démarre au début du film : sa coupe est parfaite
+        cut_quality = 1.0 if index == 0 else round(quality, 3)
+        chapters.append({
+            "index": index,
+            "file": f"chapitre_{index + 1:02d}.mp3",
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "duration": round(end - start, 3),
+            "cut_quality": cut_quality,
+            "cut_label": cut_label(cut_quality),
+            "text": text_between(speech, start, end) if speech else "",
+        })
+    return chapters
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("audio", type=Path, help="Fichier audio (ou vidéo) à découper")
@@ -192,7 +250,6 @@ def main() -> None:
         sys.exit(f"Erreur : fichier introuvable : {args.audio}")
     if not 0 < args.tolerance <= 1:
         sys.exit("Erreur : --tolerance doit être compris entre 0 (exclu) et 1.")
-
     if args.chapters is not None and args.chapters < 1:
         sys.exit("Erreur : --chapters doit valoir au moins 1.")
 
@@ -210,10 +267,11 @@ def main() -> None:
     print(f"Audio : {args.audio.name} — durée {format_time(duration)}")
     print(f"Objectif : des chapitres d'environ {format_time(target)}")
 
-    speech = parse_srt(args.srt) if args.srt else []
+    speech = []
     if args.srt:
         if not args.srt.is_file():
             sys.exit(f"Erreur : fichier introuvable : {args.srt}")
+        speech = parse_srt(args.srt)
         print(f"Transcription : {len(speech)} répliques lues dans {args.srt.name}")
 
     print("Analyse des silences (cela peut prendre une minute)...")
@@ -223,58 +281,24 @@ def main() -> None:
         print("  Aucun silence trouvé : essayez un seuil plus permissif, "
               "par exemple --noise -40 ou --min-silence 0.4.")
 
-    candidates = build_candidates(
-        duration, silences, speech,
-        # Assez serré pour toujours offrir un repli, assez large pour que deux
-        # points de repli ne se confondent pas
-        grid_step=max(target / 4, 2 * MERGE_DISTANCE),
+    chapters = plan_chapters(
+        duration, silences, speech, target, args.tolerance, args.boundary_weight
     )
-    cuts = choose_cuts(
-        duration, candidates, target,
-        min_length=target * (1 - args.tolerance),
-        max_length=target * (1 + args.tolerance),
-        boundary_weight=args.boundary_weight,
-    )
-    if not cuts:
+    if not chapters:
         sys.exit(
             "Erreur : aucun découpage possible avec ces réglages. "
             "Augmentez --tolerance ou changez la durée visée."
         )
 
-    chapters = []
-    for index in range(len(cuts) - 1):
-        start, quality = cuts[index]
-        end = cuts[index + 1][0]
-        chapters.append({
-            "index": index,
-            "file": f"chapitre_{index + 1:02d}.mp3",
-            "start": round(start, 3),
-            "end": round(end, 3),
-            "duration": round(end - start, 3),
-            # Qualité de la coupe qui ouvre ce chapitre (le chapitre 1 démarre
-            # au début du film, donc toujours parfaitement placé)
-            "cut_quality": round(quality, 3) if index > 0 else 1.0,
-            "text": text_between(speech, start, end) if speech else "",
-        })
-
     print(f"\n{len(chapters)} chapitres proposés :\n")
     print(f"  {'#':>3}  {'Début':>8}  {'Fin':>8}  {'Durée':>7}  Coupe")
     weak = 0
     for chapter in chapters:
-        quality = chapter["cut_quality"]
-        if quality >= 0.6:
-            label = "franche"
-        elif quality > 0.0:
-            label = "correcte"
-        elif quality == 0.0:
-            label = "arbitraire"
-        else:
-            label = "sur une réplique !"
-        if quality <= 0.0:
+        if chapter["cut_quality"] <= 0.0:
             weak += 1
         print(f"  {chapter['index'] + 1:>3}  {format_time(chapter['start']):>8}  "
               f"{format_time(chapter['end']):>8}  "
-              f"{format_time(chapter['duration']):>7}  {label}")
+              f"{format_time(chapter['duration']):>7}  {chapter['cut_label']}")
 
     if weak:
         print(f"\n  {weak} coupe(s) sans silence franc. Pour améliorer : "

@@ -25,6 +25,15 @@ TARGET_SIZE = (640, 480)
 # En dessous/au-dessus de ces luminosités moyennes, l'image est un fondu
 DARK_LIMIT = 30.0
 BRIGHT_LIMIT = 30.0
+# En dessous de ce score, l'image est plate : on le signale à l'utilisateur
+LOW_DETAIL_SCORE = 12.0
+
+
+def format_time(seconds: float) -> str:
+    total = int(round(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}"
 
 
 def frame_score(frame: np.ndarray) -> float:
@@ -69,11 +78,63 @@ def save_png(frame: np.ndarray, destination: Path) -> None:
     fitted.save(destination, "PNG")
 
 
-def format_time(seconds: float) -> str:
-    total = int(round(seconds))
-    hours, remainder = divmod(total, 3600)
-    minutes, secs = divmod(remainder, 60)
-    return f"{hours}:{minutes:02d}:{secs:02d}"
+def generate_images(
+    video: Path, chapters: list[dict], output_dir: Path, samples: int = 9,
+    source_duration: float | None = None, on_progress=None,
+) -> dict:
+    """Écrit une image par chapitre et complète chaque chapitre avec son nom.
+
+    Retourne un compte rendu : nombre d'images écrites, avertissements, et
+    éventuel décalage entre la vidéo et le découpage.
+    """
+    capture = cv2.VideoCapture(str(video))
+    if not capture.isOpened():
+        raise RuntimeError(f"Impossible d'ouvrir la vidéo : {video}")
+
+    video_duration = media_duration(video)
+    mismatch = None
+    if source_duration and abs(video_duration - source_duration) > 2.0:
+        mismatch = (
+            f"La vidéo dure {format_time(video_duration)} alors que le découpage "
+            f"porte sur {format_time(source_duration)}. Vérifiez qu'il s'agit "
+            "bien du film qui a servi à produire le découpage."
+        )
+
+    written, warnings, details = 0, [], []
+    for position, chapter in enumerate(chapters):
+        name = Path(chapter["file"]).stem + ".png"
+        frame, score, moment = best_frame(
+            capture, chapter["start"], chapter["end"], samples
+        )
+        if frame is None:
+            reason = (
+                "ce passage est au-delà de la fin de la vidéo"
+                if chapter["start"] >= video_duration
+                else "aucune image lisible à cet endroit"
+            )
+            warnings.append(f"Chapitre {position + 1} : {reason}.")
+            chapter.pop("image", None)
+        else:
+            save_png(frame, output_dir / name)
+            chapter["image"] = name
+            chapter["image_time"] = round(moment, 3)
+            written += 1
+            details.append({
+                "index": position,
+                "name": name,
+                "time": round(moment, 3),
+                "low_detail": score < LOW_DETAIL_SCORE,
+            })
+        if on_progress:
+            on_progress(position + 1, len(chapters))
+
+    capture.release()
+    return {
+        "written": written,
+        "warnings": warnings,
+        "mismatch": mismatch,
+        "details": details,
+    }
 
 
 def main() -> None:
@@ -106,52 +167,29 @@ def main() -> None:
         sys.exit("Erreur : aucun chapitre trouvé dans le manifeste.")
 
     output_dir = args.output or args.manifest.parent
-    capture = cv2.VideoCapture(str(args.video))
-    if not capture.isOpened():
-        sys.exit(f"Erreur : impossible d'ouvrir la vidéo : {args.video}")
-
-    # Un manifeste issu d'un autre film (ou d'une autre version du montage)
-    # donnerait des images sans rapport : mieux vaut le signaler tout de suite
-    video_duration = media_duration(args.video)
-    source_duration = manifest.get("source_duration")
-    if source_duration and abs(video_duration - source_duration) > 2.0:
-        print(
-            f"⚠️  La vidéo dure {format_time(video_duration)} alors que le "
-            f"découpage porte sur {format_time(source_duration)}.\n"
-            "   Vérifiez qu'il s'agit bien du film qui a servi à produire "
-            "chapters.json.\n"
-        )
-
     print(f"Sélection d'une image pour {len(chapters)} chapitres "
           f"({args.samples} candidates testées par chapitre)...")
-
-    written = 0
-    for chapter in chapters:
-        name = Path(chapter["file"]).stem + ".png"
-        frame, score, moment = best_frame(
-            capture, chapter["start"], chapter["end"], args.samples
+    try:
+        report = generate_images(
+            args.video, chapters, output_dir, args.samples,
+            manifest.get("source_duration"),
         )
-        if frame is None:
-            reason = (
-                "ce passage est au-delà de la fin de la vidéo"
-                if chapter["start"] >= video_duration
-                else "aucune image lisible à cet endroit"
-            )
-            print(f"  ⚠️  Chapitre {chapter['index'] + 1} : {reason}.")
-            continue
-        save_png(frame, output_dir / name)
-        chapter["image"] = name
-        chapter["image_time"] = round(moment, 3)
-        note = "  (image peu contrastée)" if score < 12 else ""
-        print(f"  ✅ {name}  — image prise à {format_time(moment)}{note}")
-        written += 1
+    except RuntimeError as e:
+        sys.exit(f"Erreur : {e}")
 
-    capture.release()
+    if report["mismatch"]:
+        print(f"⚠️  {report['mismatch']}\n")
+    for detail in report["details"]:
+        note = "  (image peu contrastée)" if detail["low_detail"] else ""
+        print(f"  ✅ {detail['name']}  — image prise à "
+              f"{format_time(detail['time'])}{note}")
+    for warning in report["warnings"]:
+        print(f"  ⚠️  {warning}")
 
     args.manifest.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    print(f"\nTerminé. {written} images écrites dans '{output_dir}' "
+    print(f"\nTerminé. {report['written']} images écrites dans '{output_dir}' "
           f"et référencées dans {args.manifest.name}.")
 
 
