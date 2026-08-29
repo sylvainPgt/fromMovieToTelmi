@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Fichiers produits par les scripts (médias volumineux)
+captures/
+captures_film*/
+telmi_ready/
+input/
+*.wav
+*.mp3
+*.mkv
+*.mp4
+*.avi
+*.srt
+dialogues_du_film.txt
+audio_du_film.wav
+
+# Système
+.DS_Store
+Thumbs.db

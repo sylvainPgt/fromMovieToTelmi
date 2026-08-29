@@ -1,5 +1,5 @@
-opencv-python
-moviepy
-openai-whisper
-Pillow
-numpy
+opencv-python>=4.8
+moviepy>=2.0
+openai-whisper>=20231117
+Pillow>=10.0
+numpy>=1.24
