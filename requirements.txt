@@ -3,3 +3,5 @@ moviepy>=2.0
 openai-whisper>=20231117
 Pillow>=10.0
 numpy>=1.24
+# Fournit un binaire FFmpeg de secours si FFmpeg n'est pas dans le PATH
+imageio-ffmpeg>=0.4.9
