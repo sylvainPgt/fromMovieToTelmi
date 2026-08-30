@@ -16,15 +16,39 @@ film.mkv ─┬─► audio ──► découpage en chapitres ──► MP3 par 
 
 ## 🛠️ Installation
 
-1. Installez les dépendances :
+### 1. Récupérer le projet
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+Sur GitHub, branche `claude/project-review-improve-36izov` : bouton **Code → Download ZIP**, puis décompressez le dossier où vous voulez. En ligne de commande :
 
-2. Installez [FFmpeg](https://ffmpeg.org/). À défaut, le binaire fourni par `imageio-ffmpeg` est utilisé automatiquement.
+```bash
+git clone https://github.com/sylvainPgt/fromMovieToTelmi.git
+cd fromMovieToTelmi
+git checkout claude/project-review-improve-36izov
+```
 
-Python 3.10 ou plus récent est requis.
+### 2. Python
+
+Il faut **Python 3.10 ou plus récent**. Sous Windows, installez-le depuis [python.org](https://www.python.org/downloads/) en cochant **« Add python.exe to PATH »** sur le premier écran. Sous macOS, `brew install python`.
+
+### 3. FFmpeg
+
+C'est le seul vrai prérequis. Installez [FFmpeg](https://ffmpeg.org/download.html) (sous Windows : `winget install ffmpeg` ; sous macOS : `brew install ffmpeg`). Si vous ne l'avez pas, le paquet `imageio-ffmpeg` installé à l'étape suivante fournit un binaire de secours.
+
+### 4. Dépendances Python
+
+```bash
+pip install -r requirements.txt
+```
+
+Environ 100 Mo. Cela couvre le découpage en chapitres, le choix des images et l'assemblage du pack.
+
+**La transcription des dialogues est optionnelle et lourde** — elle installe PyTorch, soit 2 à 3 Go :
+
+```bash
+pip install -r requirements-transcription.txt
+```
+
+Elle sert uniquement à empêcher les coupes au milieu d'une réplique et à remplir le texte des chapitres. Le découpage fonctionne très bien sans, en se basant sur les seuls silences. Commencez sans, vous l'ajouterez si le résultat vous laisse sur votre faim.
 
 ## 🖱️ L'application (sans ligne de commande)
 
@@ -58,9 +82,9 @@ Les mêmes traitements sont disponibles script par script.
 python scripts/extract_audio.py mon_film.mkv -o audio_du_film.wav
 ```
 
-### 2. Transcrire les dialogues (recommandé)
+### 2. Transcrire les dialogues (optionnel)
 
-Le `.srt` sert à deux choses : éviter de couper une réplique en deux, et remplir le texte de chaque chapitre.
+Demande `pip install -r requirements-transcription.txt`. Le `.srt` sert à deux choses : éviter de couper une réplique en deux, et remplir le texte de chaque chapitre.
 
 ```bash
 python scripts/transcribe.py audio_du_film.wav -m base --srt

@@ -1,0 +1,4 @@
+# Optionnel : uniquement pour transcrire les dialogues.
+# Attention, cela installe PyTorch (2 à 3 Go de téléchargement).
+# Installation : pip install -r requirements-transcription.txt
+openai-whisper>=20231117

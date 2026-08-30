@@ -1,7 +1,8 @@
+# Nécessaire pour l'application et le découpage en chapitres.
+# Installation : pip install -r requirements.txt
 opencv-python>=4.8
-moviepy>=2.0
-openai-whisper>=20231117
 Pillow>=10.0
 numpy>=1.24
+moviepy>=2.0
 # Fournit un binaire FFmpeg de secours si FFmpeg n'est pas dans le PATH
 imageio-ffmpeg>=0.4.9
