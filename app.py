@@ -10,11 +10,14 @@ Rien ne sort de votre ordinateur : le serveur n'écoute que sur 127.0.0.1.
     python app.py
 """
 
+import contextlib
 import json
 import mimetypes
 import os
 import socket
 import string
+import time
+import types
 import sys
 import threading
 import traceback
@@ -46,6 +49,67 @@ STATE: dict = {
 }
 JOB: dict = {"state": "idle", "label": "", "progress": 0.0, "error": None, "result": None}
 LOCK = threading.Lock()
+
+
+class _WhisperProgress:
+    """Remplace la barre de progression interne de Whisper.
+
+    Whisper n'expose aucun moyen de suivre l'avancement d'une transcription :
+    il construit une barre tqdm et l'incrémente au fil du décodage. On glisse
+    cet objet à la place pour convertir ces incréments en pourcentage.
+    """
+
+    def __init__(self, total=None, on_progress=None):
+        self.total = total or 0
+        self.done = 0
+        self.on_progress = on_progress
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exception):
+        return False
+
+    def update(self, count=1):
+        self.done += count or 0
+        if self.on_progress and self.total:
+            self.on_progress(min(100.0, 100.0 * self.done / self.total))
+
+    # Whisper n'appelle pas ces méthodes, mais tqdm les expose
+    def close(self):
+        pass
+
+    def set_description(self, *args, **kwargs):
+        pass
+
+
+@contextlib.contextmanager
+def whisper_progress(on_progress):
+    """Suit l'avancement d'une transcription Whisper, le temps de l'appel.
+
+    Si la mécanique interne de Whisper change, on repart simplement sans
+    progression plutôt que de faire échouer la transcription.
+    """
+    try:
+        import whisper.transcribe as module
+    except Exception:
+        yield False
+        return
+
+    original = getattr(module, "tqdm", None)
+    if original is None:
+        yield False
+        return
+
+    module.tqdm = types.SimpleNamespace(
+        tqdm=lambda *args, **kwargs: _WhisperProgress(
+            total=kwargs.get("total"), on_progress=on_progress
+        )
+    )
+    try:
+        yield True
+    finally:
+        module.tqdm = original
 
 
 def set_job(**fields) -> None:
@@ -82,16 +146,31 @@ def analyze_worker(params: dict) -> None:
                 video, wav,
                 on_progress=lambda t: set_job(progress=min(99.0, 100 * t / duration)),
             )
-            set_job(label="Transcription des dialogues (le plus long)...", progress=0.0)
             try:
                 import whisper
             except ImportError:
                 raise RuntimeError(
                     "La transcription demande le paquet openai-whisper. "
-                    "Installez-le avec : pip install openai-whisper"
+                    "Installez-le avec : pip install -r requirements-transcription.txt"
                 )
-            model = whisper.load_model(params.get("model", "base"))
-            result = model.transcribe(str(wav), language="fr", fp16=False)
+            # Au premier lancement, Whisper télécharge son modèle : sans cette
+            # étape distincte, l'utilisateur reste devant une barre immobile
+            # sans savoir ce qui se passe.
+            name = params.get("model", "base")
+            set_job(
+                label=f"Préparation du modèle « {name} » "
+                      "(téléchargement au premier lancement)...",
+                progress=0.0,
+            )
+            model = whisper.load_model(name)
+
+            set_job(label="Transcription des dialogues...", progress=0.0)
+            with whisper_progress(lambda pct: set_job(progress=pct)):
+                # verbose=False active la barre interne que l'on vient de
+                # remplacer, sans imprimer les répliques dans la console
+                result = model.transcribe(
+                    str(wav), language="fr", fp16=False, verbose=False
+                )
             srt_path = workdir / "dialogues.srt"
             with open(srt_path, "w", encoding="utf-8") as handle:
                 for number, segment in enumerate(result["segments"], start=1):
@@ -219,7 +298,8 @@ def start_job(worker, params: dict) -> dict:
     """Démarre un traitement de fond, sauf si un autre tourne déjà."""
     if snapshot(JOB)["state"] == "running":
         return {"ok": False, "error": "Un traitement est déjà en cours."}
-    set_job(state="running", label="Démarrage...", progress=0.0, error=None, result=None)
+    set_job(state="running", label="Démarrage...", progress=0.0, error=None,
+            result=None, started=time.time())
     threading.Thread(target=worker, args=(params,), daemon=True).start()
     return {"ok": True}
 
@@ -384,7 +464,10 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/browse":
             return self._send_json(api_browse((query.get("path") or [None])[0]))
         if route == "/api/job":
-            return self._send_json(snapshot(JOB))
+            job = snapshot(JOB)
+            if job.get("started"):
+                job["elapsed"] = round(time.time() - job["started"], 1)
+            return self._send_json(job)
         if route == "/api/thumb":
             return self._serve_thumb(query)
         if route.startswith("/api/"):

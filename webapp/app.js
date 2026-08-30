@@ -26,6 +26,13 @@ function sizeLabel(bytes) {
   return giga >= 1 ? `${giga.toFixed(1)} Go` : `${Math.round(bytes / 1e6)} Mo`;
 }
 
+function elapsedLabel(seconds) {
+  const total = Math.round(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m ? `${m} min ${String(s).padStart(2, '0')} s` : `${s} s`;
+}
+
 function showError(element, message) {
   element.textContent = message;
   element.hidden = !message;
@@ -41,7 +48,10 @@ function followJob(progressBox, errorBox, onDone) {
   const timer = setInterval(async () => {
     const job = await api('/api/job');
     fill.style.width = `${job.progress || 0}%`;
-    label.textContent = job.label || '';
+    // Le temps écoulé rassure quand une étape longue reste à 0 %
+    const parts = [job.label || ''];
+    if (job.elapsed >= 5) parts.push(elapsedLabel(job.elapsed));
+    label.textContent = parts.filter(Boolean).join(' · ');
     if (job.state === 'done') {
       clearInterval(timer);
       progressBox.hidden = true;
@@ -142,6 +152,7 @@ browser.onclick = (event) => { if (event.target === browser) browser.hidden = tr
 
 $('opt-transcribe').onchange = (event) => {
   $('model-row').hidden = !event.target.checked;
+  $('transcribe-warning').hidden = !event.target.checked;
 };
 $('opt-noise').oninput = (e) => { $('out-noise').textContent = `${e.target.value} dB`; };
 $('opt-minsil').oninput = (e) => {
