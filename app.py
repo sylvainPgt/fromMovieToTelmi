@@ -12,7 +12,9 @@ Rien ne sort de votre ordinateur : le serveur n'écoute que sur 127.0.0.1.
 
 import json
 import mimetypes
+import os
 import socket
+import string
 import sys
 import threading
 import traceback
@@ -226,12 +228,59 @@ def start_job(worker, params: dict) -> dict:
 # Points d'entrée de l'interface
 # --------------------------------------------------------------------------
 
+def available_drives() -> list[dict]:
+    """Lecteurs disponibles sous Windows (C:, D:, clé USB...).
+
+    Sans cela, l'explorateur ne pourrait jamais quitter le disque système :
+    la remontée par les dossiers parents s'arrête à la racine du lecteur.
+    """
+    if os.name != "nt":
+        return []
+    mask = 0
+    try:
+        import ctypes
+
+        mask = ctypes.windll.kernel32.GetLogicalDrives()
+    except Exception:
+        mask = 0
+
+    drives = []
+    for position, letter in enumerate(string.ascii_uppercase):
+        if mask:
+            present = bool(mask >> position & 1)
+        else:
+            # Repli si l'appel système a échoué
+            try:
+                present = Path(f"{letter}:\\").exists()
+            except OSError:
+                present = False
+        if present:
+            drives.append({"name": f"{letter}:", "path": f"{letter}:\\"})
+    return drives
+
+
 def api_browse(path_value: str | None) -> dict:
-    """Liste un dossier : sous-dossiers et fichiers vidéo/audio."""
-    current = Path(path_value).expanduser() if path_value else Path.home()
-    current = current.resolve()
-    if not current.is_dir():
+    """Liste un dossier : sous-dossiers et fichiers vidéo/audio.
+
+    Accepte aussi le chemin d'un film saisi directement, pour aller droit au
+    but sans naviguer.
+    """
+    drives = available_drives()
+    if not path_value:
         current = Path.home().resolve()
+    else:
+        candidate = Path(path_value.strip().strip('"')).expanduser()
+        if candidate.is_file():
+            if candidate.suffix.lower() not in VIDEO_EXTENSIONS:
+                return {"error": f"Ce fichier n'est pas une vidéo reconnue : {candidate.name}",
+                        "drives": drives}
+            return {"file": {
+                "name": candidate.name, "path": str(candidate.resolve()),
+                "size": candidate.stat().st_size,
+            }}
+        if not candidate.is_dir():
+            return {"error": f"Chemin introuvable : {candidate}", "drives": drives}
+        current = candidate.resolve()
 
     directories, files = [], []
     try:
@@ -249,10 +298,11 @@ def api_browse(path_value: str | None) -> dict:
             except OSError:
                 continue
     except PermissionError:
-        return {"error": f"Dossier non lisible : {current}"}
+        return {"error": f"Dossier non lisible : {current}", "drives": drives}
 
     parent = str(current.parent) if current.parent != current else None
-    return {"path": str(current), "parent": parent, "dirs": directories, "files": files}
+    return {"path": str(current), "parent": parent, "drives": drives,
+            "dirs": directories, "files": files}
 
 
 def api_segment(params: dict) -> dict:

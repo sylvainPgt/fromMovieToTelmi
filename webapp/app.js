@@ -64,10 +64,25 @@ async function openBrowser(path) {
   $('browser-path').textContent = data.path || '';
   list.innerHTML = '';
 
-  if (data.error) {
-    list.innerHTML = `<li class="empty">${data.error}</li>`;
+  // Un film indique directement par son chemin : on le prend sans naviguer
+  if (data.file) {
+    chooseFilm(data.file);
     return;
   }
+  showError($('browser-error'), data.error || '');
+  if (data.error && !data.drives?.length) {
+    browser.hidden = false;
+    return;
+  }
+
+  // Sous Windows, les autres lecteurs (D:, cle USB...) sont hors de
+  // l'arborescence du disque systeme : il faut les proposer explicitement
+  for (const drive of (data.drives || [])) {
+    const item = row('💾', drive.name, () => openBrowser(drive.path));
+    item.className = 'drive';
+    list.appendChild(item);
+  }
+  if (data.error) { browser.hidden = false; return; }
   if (data.parent) {
     list.appendChild(row('📁', '..', () => openBrowser(data.parent)));
   }
@@ -109,6 +124,15 @@ function chooseFilm(file) {
   $('analyze-btn').disabled = false;
   if (!$('opt-title').value) $('opt-title').value = file.name.replace(/\.[^.]+$/, '');
 }
+
+function gotoTypedPath() {
+  const value = $('browser-goto').value.trim();
+  if (value) openBrowser(value);
+}
+$('browser-go').onclick = gotoTypedPath;
+$('browser-goto').onkeydown = (event) => {
+  if (event.key === 'Enter') gotoTypedPath();
+};
 
 $('pick-btn').onclick = () => openBrowser(null);
 $('browser-close').onclick = () => { browser.hidden = true; };

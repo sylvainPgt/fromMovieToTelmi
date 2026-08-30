@@ -199,6 +199,17 @@ tbody tr td:nth-child(2), tbody tr td:nth-child(3), tbody tr td:nth-child(4) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   border-bottom: 1px solid var(--line);
 }
+.goto {
+  display: flex; gap: 0.5rem; padding: 0.7rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+}
+.goto input {
+  flex: 1; min-width: 0; font: inherit; padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line); border-radius: 7px;
+  background: var(--bg); color: var(--ink);
+}
+.modal-box .error { margin: 0.7rem 1.2rem; }
+.listing .drive button { font-weight: 600; }
 .listing { list-style: none; margin: 0; padding: 0.4rem 0; overflow-y: auto; }
 .listing li button {
   width: 100%; text-align: left; border: 0; background: none;
