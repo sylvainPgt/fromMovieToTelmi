@@ -12,6 +12,7 @@ Rien ne sort de votre ordinateur : le serveur n'écoute que sur 127.0.0.1.
 
 import contextlib
 import json
+import re
 import mimetypes
 import os
 import socket
@@ -49,6 +50,66 @@ STATE: dict = {
 }
 JOB: dict = {"state": "idle", "label": "", "progress": 0.0, "error": None, "result": None}
 LOCK = threading.Lock()
+
+
+# Whisper imprime « [MM:SS.mmm --> MM:SS.mmm] texte », en passant à
+# « HH:MM:SS.mmm » au-delà d'une heure : les deux formes coexistent dans un
+# même long métrage.
+_SEGMENT_END_RE = re.compile(r"-->\s*((?:\d+:)?\d{1,2}:\d{2}(?:\.\d+)?)\]")
+
+
+def _parse_clock(value: str) -> float:
+    """Convertit « MM:SS.mmm » ou « HH:MM:SS.mmm » en secondes."""
+    total = 0.0
+    for part in value.split(":"):
+        total = total * 60 + float(part)
+    return total
+
+
+class _TranscriptionEcho:
+    """Relaie la sortie de Whisper vers la console et en déduit l'avancement.
+
+    Whisper imprime chaque réplique décodée avec ses horodatages : la fin de
+    la dernière réplique dit où l'on en est dans le film. Cette mesure ne
+    dépend d'aucun rouage interne, contrairement à sa barre de progression,
+    et l'utilisateur voit le texte défiler, preuve que le travail avance.
+    """
+
+    def __init__(self, stream, duration, on_progress):
+        self.stream = stream
+        self.duration = duration or 0.0
+        self.on_progress = on_progress
+        self.pending = ""
+
+    def write(self, text):
+        if self.stream is not None:
+            self.stream.write(text)
+        self.pending += text
+        while "\n" in self.pending:
+            line, self.pending = self.pending.split("\n", 1)
+            match = _SEGMENT_END_RE.search(line)
+            if match and self.duration:
+                position = _parse_clock(match.group(1))
+                self.on_progress(min(100.0, 100.0 * position / self.duration))
+        return len(text)
+
+    def flush(self):
+        if self.stream is not None:
+            self.stream.flush()
+
+    def isatty(self):
+        return False
+
+
+@contextlib.contextmanager
+def transcription_echo(duration, on_progress):
+    """Écoute la sortie de Whisper le temps de la transcription."""
+    original = sys.stdout
+    sys.stdout = _TranscriptionEcho(original, duration, on_progress)
+    try:
+        yield
+    finally:
+        sys.stdout = original
 
 
 class _WhisperProgress:
@@ -101,11 +162,15 @@ def whisper_progress(on_progress):
         yield False
         return
 
-    module.tqdm = types.SimpleNamespace(
-        tqdm=lambda *args, **kwargs: _WhisperProgress(
-            total=kwargs.get("total"), on_progress=on_progress
-        )
-    )
+    def fabrique(*args, **kwargs):
+        return _WhisperProgress(total=kwargs.get("total"), on_progress=on_progress)
+
+    # Selon la version, Whisper fait « import tqdm » puis appelle tqdm.tqdm(),
+    # ou « from tqdm import tqdm » et appelle tqdm() directement.
+    if hasattr(original, "tqdm"):
+        module.tqdm = types.SimpleNamespace(tqdm=fabrique)
+    else:
+        module.tqdm = fabrique
     try:
         yield True
     finally:
@@ -164,12 +229,30 @@ def analyze_worker(params: dict) -> None:
             )
             model = whisper.load_model(name)
 
-            set_job(label="Transcription des dialogues...", progress=0.0)
-            with whisper_progress(lambda pct: set_job(progress=pct)):
-                # verbose=False active la barre interne que l'on vient de
-                # remplacer, sans imprimer les répliques dans la console
+            # Whisper calcule d'abord le spectrogramme du film entier : sur un
+            # long métrage ce préambule dure plusieurs minutes, pendant
+            # lesquelles aucune progression n'est possible. Le dire évite de
+            # laisser croire à un blocage.
+            set_job(
+                label="Préparation du son (plusieurs minutes sur un long film)...",
+                progress=0.0,
+            )
+
+            avancement = {"valeur": 0.0}
+
+            def rapporter(pourcentage):
+                # Deux sources alimentent la progression : on ne recule jamais
+                if pourcentage <= avancement["valeur"]:
+                    return
+                avancement["valeur"] = pourcentage
+                set_job(progress=pourcentage, label="Transcription des dialogues...")
+
+            with whisper_progress(rapporter), transcription_echo(duration, rapporter):
+                # verbose=True fait imprimer chaque réplique décodée : la
+                # console devient une preuve de vie, et cette sortie sert de
+                # source de progression indépendante des rouages de Whisper.
                 result = model.transcribe(
-                    str(wav), language="fr", fp16=False, verbose=False
+                    str(wav), language="fr", fp16=False, verbose=True
                 )
             srt_path = workdir / "dialogues.srt"
             with open(srt_path, "w", encoding="utf-8") as handle:
