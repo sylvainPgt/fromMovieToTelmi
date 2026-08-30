@@ -58,6 +58,17 @@ LOCK = threading.Lock()
 _SEGMENT_END_RE = re.compile(r"-->\s*((?:\d+:)?\d{1,2}:\d{2}(?:\.\d+)?)\]")
 
 
+def duree_courte(secondes: float) -> str:
+    """Formate une durée pour l'annoncer : « 40 s », « 36 min », « 1 h 05 »."""
+    secondes = max(0.0, secondes)
+    if secondes < 90:
+        return f"{int(round(secondes))} s"
+    minutes = int(round(secondes / 60))
+    if minutes < 60:
+        return f"{minutes} min"
+    return f"{minutes // 60} h {minutes % 60:02d}"
+
+
 def _parse_clock(value: str) -> float:
     """Convertit « MM:SS.mmm » ou « HH:MM:SS.mmm » en secondes."""
     total = 0.0
@@ -120,28 +131,37 @@ class _WhisperProgress:
     cet objet à la place pour convertir ces incréments en pourcentage.
     """
 
-    def __init__(self, total=None, on_progress=None):
+    def __init__(self, reelle=None, total=None, on_progress=None):
+        # On enveloppe la vraie barre au lieu de la supprimer : elle affiche
+        # dans la console un débit et un temps restant que nous ne saurions
+        # pas calculer aussi bien.
+        self.reelle = reelle
         self.total = total or 0
         self.done = 0
         self.on_progress = on_progress
 
     def __enter__(self):
+        if self.reelle is not None:
+            self.reelle.__enter__()
         return self
 
     def __exit__(self, *exception):
+        if self.reelle is not None:
+            self.reelle.__exit__(*exception)
         return False
 
     def update(self, count=1):
+        if self.reelle is not None:
+            self.reelle.update(count)
         self.done += count or 0
         if self.on_progress and self.total:
             self.on_progress(min(100.0, 100.0 * self.done / self.total))
 
-    # Whisper n'appelle pas ces méthodes, mais tqdm les expose
-    def close(self):
-        pass
-
-    def set_description(self, *args, **kwargs):
-        pass
+    def __getattr__(self, nom):
+        # Toute autre méthode de tqdm est transmise telle quelle
+        if self.__dict__.get("reelle") is not None:
+            return getattr(self.__dict__["reelle"], nom)
+        raise AttributeError(nom)
 
 
 @contextlib.contextmanager
@@ -163,7 +183,14 @@ def whisper_progress(on_progress):
         return
 
     def fabrique(*args, **kwargs):
-        return _WhisperProgress(total=kwargs.get("total"), on_progress=on_progress)
+        classe = getattr(original, "tqdm", original)
+        try:
+            reelle = classe(*args, **kwargs)
+        except Exception:
+            reelle = None
+        return _WhisperProgress(
+            reelle=reelle, total=kwargs.get("total"), on_progress=on_progress
+        )
 
     # Selon la version, Whisper fait « import tqdm » puis appelle tqdm.tqdm(),
     # ou « from tqdm import tqdm » et appelle tqdm() directement.
@@ -239,20 +266,28 @@ def analyze_worker(params: dict) -> None:
             )
 
             avancement = {"valeur": 0.0}
+            depart = time.time()
 
             def rapporter(pourcentage):
                 # Deux sources alimentent la progression : on ne recule jamais
                 if pourcentage <= avancement["valeur"]:
                     return
                 avancement["valeur"] = pourcentage
-                set_job(progress=pourcentage, label="Transcription des dialogues...")
+                libelle = "Transcription des dialogues..."
+                # Une fois quelques pourcents parcourus, l'allure devient
+                # assez fiable pour annoncer le temps restant
+                ecoule = time.time() - depart
+                if pourcentage >= 2.0 and ecoule >= 20.0:
+                    reste = ecoule * (100.0 - pourcentage) / pourcentage
+                    libelle += f" · reste environ {duree_courte(reste)}"
+                set_job(progress=pourcentage, label=libelle)
 
             with whisper_progress(rapporter), transcription_echo(duration, rapporter):
-                # verbose=True fait imprimer chaque réplique décodée : la
-                # console devient une preuve de vie, et cette sortie sert de
-                # source de progression indépendante des rouages de Whisper.
+                # verbose=False laisse Whisper afficher sa propre barre
+                # chiffrée dans la console (débit et temps restant), que l'on
+                # enveloppe pour en tirer aussi la progression de l'interface.
                 result = model.transcribe(
-                    str(wav), language="fr", fp16=False, verbose=True
+                    str(wav), language="fr", fp16=False, verbose=False
                 )
             srt_path = workdir / "dialogues.srt"
             with open(srt_path, "w", encoding="utf-8") as handle:
