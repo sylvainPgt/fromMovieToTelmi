@@ -107,9 +107,33 @@
     </table></div>
   </section>
 
-  <!-- Étape 3 : la génération -->
+  <!-- Étape 3 : le choix des images -->
+  <section class="card" id="step-images" hidden>
+    <h2><span class="num">3</span> Les images</h2>
+    <p class="summary">
+      L'appli propose plusieurs images par chapitre et pré-sélectionne la plus
+      lisible. Cliquez pour en choisir une autre. Cette étape est facultative :
+      sans elle, la pré-sélection s'applique d'office.
+    </p>
+
+    <label class="inline">
+      Propositions par chapitre
+      <input type="range" id="opt-percha" min="6" max="24" step="2" value="12">
+      <output id="out-percha">12</output>
+    </label>
+
+    <button class="btn" id="candidates-btn">Proposer des images</button>
+    <div class="progress" id="candidates-progress" hidden>
+      <div class="bar"><span></span></div>
+      <p class="label"></p>
+    </div>
+    <p class="error" id="candidates-error" hidden></p>
+    <div id="galleries"></div>
+  </section>
+
+  <!-- Étape 4 : la génération -->
   <section class="card" id="step-build" hidden>
-    <h2><span class="num">3</span> Le pack</h2>
+    <h2><span class="num">4</span> Le pack</h2>
 
     <label class="inline">Titre de l'histoire
       <input type="text" id="opt-title" placeholder="Le titre lu par la Telmi">
@@ -120,8 +144,9 @@
 
     <label class="check">
       <input type="checkbox" id="opt-images" checked>
-      <span>Choisir une image par chapitre
-        <em>Prise dans le film, en évitant les fondus au noir.</em></span>
+      <span>Inclure les images
+        <em>Celles choisies à l'étape 3, ou à défaut la meilleure de chaque
+        chapitre.</em></span>
     </label>
     <label class="check">
       <input type="checkbox" id="opt-pack" checked>

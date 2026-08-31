@@ -416,6 +416,66 @@ def generate_worker(params: dict) -> None:
         set_job(state="error", error=str(error), label="", progress=0.0)
 
 
+def candidates_worker(params: dict) -> None:
+    """Extrait plusieurs images par chapitre, à soumettre au choix."""
+    try:
+        state = snapshot(STATE)
+        chapters, video, workdir = state["chapters"], state["video"], state["workdir"]
+        if not chapters:
+            raise RuntimeError("Faites d'abord le découpage.")
+
+        try:
+            from extract_chapter_images import propose_candidates
+        except ImportError as error:
+            raise RuntimeError(
+                "Le choix des images demande opencv-python et Pillow. "
+                f"Installez-les avec : pip install -r requirements.txt ({error})"
+            )
+
+        set_job(state="running", label="Extraction des propositions...",
+                progress=0.0, error=None)
+        propose_candidates(
+            video, chapters, workdir,
+            per_chapter=int(params.get("per_chapter", 12)),
+            on_progress=lambda fait, total: set_job(
+                progress=100.0 * fait / total,
+                label=f"Chapitre {fait} sur {total}...",
+            ),
+        )
+        with LOCK:
+            STATE["chapters"] = chapters
+        set_job(
+            state="done", label="Propositions prêtes", progress=100.0,
+            result={"chapters": [
+                {"index": c["index"], "start_label": format_time(c["start"]),
+                 "duration_label": format_time(c["duration"]),
+                 "candidates": c.get("candidates", []),
+                 "chosen_time": c.get("chosen_time")}
+                for c in chapters
+            ]},
+        )
+    except Exception as error:  # noqa: BLE001
+        traceback.print_exc()
+        set_job(state="error", error=str(error), label="", progress=0.0)
+
+
+def api_choose(params: dict) -> dict:
+    """Retient l'image choisie à la main pour un chapitre."""
+    state = snapshot(STATE)
+    chapters = state["chapters"]
+    try:
+        position = int(params.get("index", -1))
+        moment = float(params.get("time"))
+    except (TypeError, ValueError):
+        return {"error": "Choix invalide."}
+    if not 0 <= position < len(chapters):
+        return {"error": "Chapitre inconnu."}
+
+    with LOCK:
+        STATE["chapters"][position]["chosen_time"] = moment
+    return {"ok": True, "index": position, "time": moment}
+
+
 def _srt_time(seconds: float) -> str:
     millis = int(round(seconds * 1000))
     hours, rest = divmod(millis, 3_600_000)
@@ -612,6 +672,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(start_job(analyze_worker, payload))
         if route == "/api/segment":
             return self._send_json(api_segment(payload))
+        if route == "/api/candidates":
+            return self._send_json(start_job(candidates_worker, payload))
+        if route == "/api/choose":
+            return self._send_json(api_choose(payload))
         if route == "/api/generate":
             return self._send_json(start_job(generate_worker, payload))
         if route == "/api/quit":
@@ -636,10 +700,13 @@ class Handler(BaseHTTPRequestHandler):
         name = (query.get("name") or [""])[0]
         if not workdir or not name:
             return self._send(404, b"Introuvable", "text/plain; charset=utf-8")
-        target = (Path(workdir) / unquote(name)).resolve()
-        if Path(workdir).resolve() != target.parent or not target.is_file():
+        racine = Path(workdir).resolve()
+        target = (racine / unquote(name)).resolve()
+        # Le dossier de travail et ses sous-dossiers, et rien d'autre
+        if not target.is_relative_to(racine) or not target.is_file():
             return self._send(404, b"Introuvable", "text/plain; charset=utf-8")
-        return self._send(200, target.read_bytes(), "image/png")
+        type_image = "image/jpeg" if target.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+        return self._send(200, target.read_bytes(), type_image)
 
 
 def find_port(preferred: int = 8756) -> int:

@@ -220,3 +220,28 @@ tbody tr td:nth-child(2), tbody tr td:nth-child(3), tbody tr td:nth-child(4) {
 .listing .size { margin-left: auto; color: var(--soft); font-size: 0.8rem; }
 .listing .empty { padding: 1.2rem; color: var(--soft); font-size: 0.9rem; }
 [hidden] { display: none !important; }
+
+/* Planches de propositions */
+.gallery { margin-top: 1.4rem; }
+.gallery h3 {
+  margin: 0 0 0.5rem; font-size: 0.9rem; font-weight: 600;
+  display: flex; gap: 0.6rem; align-items: baseline;
+}
+.gallery h3 span { color: var(--soft); font-weight: 400; font-size: 0.82rem; }
+.strip {
+  display: grid; gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+.shot {
+  border: 0; padding: 0; background: none; cursor: pointer;
+  border-radius: 8px; overflow: hidden; position: relative;
+  outline: 2px solid transparent; outline-offset: 2px;
+}
+.shot img { width: 100%; display: block; aspect-ratio: 4/3; object-fit: cover; }
+.shot figcaption {
+  color: var(--soft); font-size: 0.75rem; padding: 0.25rem 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.shot:hover { outline-color: var(--line); }
+.shot[aria-pressed="true"] { outline-color: var(--accent); }
+.shot[aria-pressed="true"] figcaption { color: var(--accent); font-weight: 600; }
