@@ -223,8 +223,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--noise", type=float, default=-30.0,
-        help="Seuil de silence en dB (défaut : -30). Baissez-le (ex. -40) si "
-             "le film est bruyant et qu'aucun silence n'est trouvé.",
+        help="Seuil de silence en dB (défaut : -30). Un seuil MOINS négatif "
+             "est plus tolérant et trouve plus de silences : remontez-le "
+             "(ex. -25 ou -20) si le film est bruyant et qu'il en manque. "
+             "Le descendre (-40) rend la détection plus stricte.",
     )
     parser.add_argument(
         "--min-silence", type=float, default=0.6,
@@ -278,8 +280,9 @@ def main() -> None:
     silences = detect_silences(args.audio, args.noise, args.min_silence)
     print(f"  {len(silences)} silences détectés.")
     if not silences:
-        print("  Aucun silence trouvé : essayez un seuil plus permissif, "
-              "par exemple --noise -40 ou --min-silence 0.4.")
+        print("  Aucun silence trouvé : essayez un seuil plus tolérant, "
+              "c'est-à-dire moins négatif, par exemple --noise -20, "
+              "ou raccourcissez avec --min-silence 0.4.")
 
     chapters = plan_chapters(
         duration, silences, speech, target, args.tolerance, args.boundary_weight
@@ -302,7 +305,8 @@ def main() -> None:
 
     if weak:
         print(f"\n  {weak} coupe(s) sans silence franc. Pour améliorer : "
-              "essayez --noise -40, --min-silence 0.4 ou --tolerance 0.7.")
+              "remontez le seuil vers --noise -25, raccourcissez avec "
+              "--min-silence 0.4, ou assouplissez avec --tolerance 0.7.")
 
     manifest = {
         "source": str(args.audio),

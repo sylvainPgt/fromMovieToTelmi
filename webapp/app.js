@@ -271,7 +271,8 @@ async function segment() {
   if (data.weak > 0) {
     warn.textContent = `${data.weak} coupe${data.weak > 1 ? 's' : ''} ne tombe`
       + `${data.weak > 1 ? 'nt' : ''} pas sur un silence franc. Essayez d'assouplir `
-      + `la régularité, ou relancez l'analyse avec un seuil de silence plus bas.`;
+      + `la régularité, ou relancez l'analyse avec un seuil de silence plus `
+      + `tolérant, c'est-à-dire moins négatif (vers −25 ou −20 dB).`;
     warn.hidden = false;
   } else {
     warn.hidden = true;

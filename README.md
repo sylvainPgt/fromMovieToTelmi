@@ -124,7 +124,7 @@ python scripts/split_chapters.py audio_du_film.wav -d 300 --srt audio_du_film.sr
 
 **Si le résultat ne vous plaît pas :**
 
-- trop de coupes `arbitraire` → le film est bruyant, essayez `--noise -40` ou `--min-silence 0.4` ;
+- trop de coupes `arbitraire` → trop peu de silences trouvés : **remontez** le seuil vers `--noise -25` ou `-20` (un seuil moins négatif est plus tolérant, donc trouve plus de silences), ou raccourcissez avec `--min-silence 0.4` ;
 - chapitres trop inégaux → baissez `--tolerance` (0.3 par exemple) ;
 - vous préférez de belles coupures à des durées régulières → montez `--boundary-weight` (0.4) ;
 - vous voulez un nombre de chapitres précis → `-n 12` au lieu de `-d`.
