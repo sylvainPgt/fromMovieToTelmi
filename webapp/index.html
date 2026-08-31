@@ -55,7 +55,7 @@
         <summary>Réglages de détection avancés</summary>
         <label class="inline">
           Seuil de silence
-          <input type="range" id="opt-noise" min="-50" max="-20" step="1" value="-30">
+          <input type="range" id="opt-noise" min="-45" max="-15" step="1" value="-30">
           <output id="out-noise">-30 dB</output>
         </label>
         <label class="inline">
@@ -63,8 +63,10 @@
           <input type="range" id="opt-minsil" min="0.2" max="2" step="0.1" value="0.6">
           <output id="out-minsil">0,6 s</output>
         </label>
-        <p class="hint">Si le film est bruyant et qu'aucun silence n'est trouvé,
-           descendez le seuil vers −40 dB.</p>
+        <p class="hint">Vers la <strong>droite</strong> (−25, −20 dB), la détection
+           est plus tolérante et trouve <strong>plus</strong> de silences : c'est le sens
+           à prendre s'il y a trop de coupes arbitraires. Vers la gauche (−40 dB), elle
+           devient plus stricte et en trouve moins.</p>
       </details>
     </div>
 
