@@ -69,7 +69,9 @@ L'interface vous guide en quatre étapes :
 3. **Les images** — l'application propose une planche par chapitre et pré-sélectionne la plus lisible. Cliquez pour en choisir une autre. Étape facultative : sans elle, la pré-sélection s'applique d'office.
 4. **Le pack** — donnez un titre, choisissez une image de couverture et enregistrez l'annonce du titre au micro (ou fournissez un fichier), puis l'application encode les MP3, reprend vos images en 640x480 et assemble le dossier.
 
-> **Installer le pack :** Telmi Sync range ses histoires dans `C:\Users\<vous>\.telmi\stories` (Windows) ou `~/.telmi/stories` (macOS, Linux). Copiez-y le dossier `pack` en le nommant comme les histoires déjà présentes, puis relancez Telmi Sync.
+> **Installer le pack :** Telmi Sync range ses histoires dans `C:\Users\<vous>\.telmi\stories` (Windows) ou `~/.telmi/stories` (macOS, Linux) — **le glisser-déposer sur la fenêtre de Telmi Sync ne fait rien**. Si l'application trouve ce dossier, elle propose d'y installer le pack directement ; sinon, copiez-y le dossier produit tel quel, puis relancez Telmi Sync.
+>
+> Le dossier est nommé selon la convention observée dans Telmi Sync : `Collection_âge_Titre_identifiant`, avec un identifiant de la forme `ffffff-<horodatage en hexadécimal>`. Un UUID classique n'est pas reconnu.
 
 Tout est écrit dans un dossier `<nom_du_film>_telmi/` à côté de votre film.
 

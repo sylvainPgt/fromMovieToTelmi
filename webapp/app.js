@@ -290,8 +290,10 @@ $('build-btn').onclick = async () => {
   const started = await api('/api/generate', {
     title: $('opt-title').value,
     age: $('opt-age').value,
+    category: $('opt-category').value,
     images: $('opt-images').checked,
     pack: $('opt-pack').checked,
+    install: $('opt-install').checked && !$('install-row').hidden,
   });
   if (!started.ok) return showError($('build-error'), started.error);
 
@@ -301,7 +303,7 @@ $('build-btn').onclick = async () => {
     $('build-btn').disabled = false;
     $('result').hidden = false;
     $('result-path').textContent = result.pack
-      ? result.pack.pack_dir
+      ? (result.pack.installed || result.pack.pack_dir)
       : result.workdir;
 
     const notes = [];
@@ -310,6 +312,13 @@ $('build-btn').onclick = async () => {
     if (result.pack && result.pack.missing_images.length) {
       notes.push('Images manquantes pour les chapitres '
         + result.pack.missing_images.join(', ') + '.');
+    }
+    if (result.pack && result.pack.install_error) {
+      notes.push(result.pack.install_error);
+    }
+    if (result.pack && result.pack.installed) {
+      notes.push('Installé dans Telmi Sync : relancez-le pour voir '
+        + "l'histoire apparaître.");
     }
     if (result.pack && result.pack.silent_title) {
       notes.push("title.mp3 est un silence d'une seconde : remplacez-le par un "
@@ -518,3 +527,13 @@ $('rec-btn').onclick = async () => {
   }, 250);
   setStatus($('title-audio-status'), '', false);
 };
+
+
+/* Telmi Sync range ses histoires dans un dossier de travail : si on le
+   trouve, on propose d'y déposer le pack directement. */
+(async () => {
+  const telmi = await api('/api/telmi');
+  if (!telmi.found) return;
+  $('install-path').textContent = telmi.path;
+  $('install-row').hidden = false;
+})();
