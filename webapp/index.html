@@ -83,6 +83,19 @@
     <h2><span class="num">2</span> Le découpage</h2>
     <p class="summary" id="cut-summary"></p>
 
+    <div class="trim">
+      <label class="inline">
+        L'histoire commence à
+        <input type="text" id="opt-from" placeholder="0:00" size="8">
+      </label>
+      <label class="inline">
+        et se termine à
+        <input type="text" id="opt-to" placeholder="fin du film" size="10">
+      </label>
+      <p class="hint">Pour écarter les génériques. Format <code>1:52:12</code>
+         ou <code>4:30</code>. Laissez vide pour tout garder.</p>
+    </div>
+
     <div class="sliders">
       <label class="inline">
         Durée d'un chapitre
@@ -155,6 +168,30 @@
       <span>Assembler le pack Telmi
         <em>Dossier prêt à copier avec Telmi Sync.</em></span>
     </label>
+
+    <div class="extras">
+      <div class="extra">
+        <h3>Image de couverture</h3>
+        <p class="hint">Celle qui représente l'histoire dans la Telmi. Sans
+           choix de votre part, l'image du premier chapitre est reprise.</p>
+        <input type="file" id="opt-cover" accept="image/*">
+        <p class="status" id="cover-status" hidden></p>
+        <img class="preview" id="cover-preview" hidden alt="Aperçu de la couverture">
+      </div>
+
+      <div class="extra">
+        <h3>Annonce du titre</h3>
+        <p class="hint">La voix qui annonce l'histoire. Enregistrez-la au micro,
+           ou choisissez un fichier audio. Sans rien, un court silence est mis.</p>
+        <div class="recorder">
+          <button class="btn" id="rec-btn">🎙 Enregistrer</button>
+          <span class="rec-time" id="rec-time" hidden>0 s</span>
+        </div>
+        <input type="file" id="opt-title-audio" accept="audio/*">
+        <p class="status" id="title-audio-status" hidden></p>
+        <audio id="title-audio-preview" controls hidden></audio>
+      </div>
+    </div>
 
     <button class="btn primary" id="build-btn">Générer</button>
     <div class="progress" id="build-progress" hidden>

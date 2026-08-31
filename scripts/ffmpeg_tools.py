@@ -172,6 +172,21 @@ def extract_full_audio(
         raise RuntimeError(f"Échec de l'extraction audio vers {destination.name}.")
 
 
+def convert_to_mp3(
+    source: Path, destination: Path, bitrate: str = "128k", sample_rate: int = 44100,
+) -> None:
+    """Convertit un fichier audio quelconque au format MP3 attendu par la Telmi."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    stderr = run_ffmpeg([
+        "-y", "-i", str(source),
+        "-vn", "-ar", str(sample_rate), "-ac", "2",
+        "-c:a", "libmp3lame", "-b:a", bitrate,
+        str(destination),
+    ])
+    if not destination.is_file() or destination.stat().st_size == 0:
+        raise RuntimeError(f"Conversion audio impossible :\n{stderr[-800:]}")
+
+
 def make_silent_mp3(destination: Path, duration: float = 1.0, sample_rate: int = 44100) -> None:
     """Crée un court MP3 silencieux (utilisé comme title.mp3 par défaut)."""
     destination.parent.mkdir(parents=True, exist_ok=True)

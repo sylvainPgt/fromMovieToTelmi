@@ -78,7 +78,7 @@ def build_notes(chapters: list[dict]) -> dict:
 def create_pack(
     chapters: list[dict], source_dir: Path, pack_dir: Path, title: str,
     age: str = "5", category: str | None = None, description: str | None = None,
-    title_audio: Path | None = None,
+    title_audio: Path | None = None, cover: Path | None = None,
 ) -> dict:
     """Écrit le pack complet sur le disque.
 
@@ -130,11 +130,16 @@ def create_pack(
         json.dumps(metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
 
-    # Image de couverture : par défaut celle du premier chapitre
+    # Couverture fournie par l'utilisateur, sinon celle du premier chapitre
     first_image = images_dir / "s0.png"
-    has_cover = first_image.is_file()
-    if has_cover:
+    if cover is not None and Path(cover).is_file():
+        shutil.copy2(cover, pack_dir / "title.png")
+        has_cover = True
+    elif first_image.is_file():
         shutil.copy2(first_image, pack_dir / "title.png")
+        has_cover = True
+    else:
+        has_cover = False
 
     silent_title = title_audio is None
     if title_audio is not None:

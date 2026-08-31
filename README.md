@@ -65,9 +65,11 @@ Votre navigateur s'ouvre sur l'interface. Tout se passe **sur votre machine** : 
 L'interface vous guide en quatre étapes :
 
 1. **Le film** — choisissez-le dans l'explorateur intégré (les lecteurs `C:`, `D:` sont listés, et vous pouvez coller un chemin), cochez la transcription si vous la voulez, puis lancez l'analyse. Une transcription déjà calculée est réutilisée : régler le seuil de silence ne coûte plus que quelques minutes.
-2. **Le découpage** — bougez le curseur de durée : le tableau des chapitres **se recalcule instantanément**, sans réanalyser le film. Chaque coupe est étiquetée `franche`, `correcte` ou `arbitraire` pour que vous voyiez d'un coup d'œil ce qui mérite un ajustement.
+2. **Le découpage** — indiquez où l'histoire commence et se termine pour écarter les génériques, puis bougez le curseur de durée : le tableau des chapitres **se recalcule instantanément**, sans réanalyser le film. Chaque coupe est étiquetée `franche`, `correcte` ou `arbitraire` pour que vous voyiez d'un coup d'œil ce qui mérite un ajustement.
 3. **Les images** — l'application propose une planche par chapitre et pré-sélectionne la plus lisible. Cliquez pour en choisir une autre. Étape facultative : sans elle, la pré-sélection s'applique d'office.
-4. **Le pack** — donnez un titre, et l'application encode les MP3, reprend vos images en 640x480 et assemble le dossier prêt pour Telmi Sync.
+4. **Le pack** — donnez un titre, choisissez une image de couverture et enregistrez l'annonce du titre au micro (ou fournissez un fichier), puis l'application encode les MP3, reprend vos images en 640x480 et assemble le dossier.
+
+> **Installer le pack :** Telmi Sync range ses histoires dans `C:\Users\<vous>\.telmi\stories` (Windows) ou `~/.telmi/stories` (macOS, Linux). Copiez-y le dossier `pack` en le nommant comme les histoires déjà présentes, puis relancez Telmi Sync.
 
 Tout est écrit dans un dossier `<nom_du_film>_telmi/` à côté de votre film.
 

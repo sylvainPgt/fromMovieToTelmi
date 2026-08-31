@@ -245,3 +245,33 @@ tbody tr td:nth-child(2), tbody tr td:nth-child(3), tbody tr td:nth-child(4) {
 .shot:hover { outline-color: var(--line); }
 .shot[aria-pressed="true"] { outline-color: var(--accent); }
 .shot[aria-pressed="true"] figcaption { color: var(--accent); font-weight: 600; }
+
+/* Rognage */
+.trim { margin-bottom: 1.1rem; }
+.trim .inline { margin-bottom: 0.4rem; }
+.trim input { width: 7rem; }
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em; background: var(--bg); padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+}
+
+/* Couverture et annonce du titre */
+.extras {
+  display: grid; gap: 1.4rem; margin: 1.4rem 0;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.extra h3 { margin: 0 0 0.3rem; font-size: 0.95rem; }
+.extra input[type="file"] { font: inherit; font-size: 0.85rem; max-width: 100%; }
+.extra .hint { margin-bottom: 0.6rem; }
+.recorder { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.6rem; }
+.recorder .btn.recording { background: var(--bad); color: #fff; border-color: var(--bad); }
+.rec-time { color: var(--soft); font-variant-numeric: tabular-nums; }
+.status { font-size: 0.85rem; color: var(--good); margin: 0.5rem 0 0; }
+.status.ko { color: var(--bad); }
+.preview {
+  margin-top: 0.6rem; width: 100%; max-width: 220px;
+  aspect-ratio: 4/3; object-fit: cover;
+  border-radius: 8px; border: 1px solid var(--line); display: block;
+}
+audio { margin-top: 0.6rem; width: 100%; max-width: 260px; }

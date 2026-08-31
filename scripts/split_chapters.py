@@ -156,12 +156,33 @@ def plan_chapters(
     target: float,
     tolerance: float = 0.5,
     boundary_weight: float = 0.25,
+    begin: float = 0.0,
+    finish: float | None = None,
 ) -> list[dict]:
     """Calcule le découpage complet et retourne la liste des chapitres.
 
     Opération purement arithmétique : une fois les silences détectés, on peut
     la relancer autant de fois qu'on veut pour ajuster les réglages.
+
+    begin et finish délimitent la partie du film à raconter : de quoi écarter
+    un générique de début ou de fin sans relancer la moindre analyse.
     """
+    finish = duration if finish is None else min(finish, duration)
+    begin = max(0.0, begin)
+    span = finish - begin
+    if span <= 0:
+        return []
+
+    # Tout est ramené dans le repère de la fenêtre, puis remis en place à la fin
+    silences = [
+        (s - begin, e - begin) for s, e in silences if s >= begin and e <= finish
+    ]
+    speech = [
+        (a - begin, b - begin, texte)
+        for a, b, texte in speech if b > begin and a < finish
+    ]
+    duration = span
+
     candidates = build_candidates(
         duration, silences, speech,
         # Assez serré pour toujours offrir un repli, assez large pour que deux
@@ -186,8 +207,8 @@ def plan_chapters(
         chapters.append({
             "index": index,
             "file": f"chapitre_{index + 1:02d}.mp3",
-            "start": round(start, 3),
-            "end": round(end, 3),
+            "start": round(start + begin, 3),
+            "end": round(end + begin, 3),
             "duration": round(end - start, 3),
             "cut_quality": cut_quality,
             "cut_label": cut_label(cut_quality),
