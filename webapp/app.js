@@ -178,7 +178,9 @@ $('analyze-btn').onclick = async () => {
       `Film de ${result.duration_label}`,
       `${result.silences} silences repérés`,
     ];
-    if (result.speech) pieces.push(`${result.speech} répliques transcrites`);
+    if (result.speech) {
+      pieces.push(`${result.speech} répliques transcrites` + (result.speech_reused ? ' (réutilisées)' : ''));
+    }
     $('cut-summary').textContent = pieces.join(' · ') + '.';
 
     $('step-cut').hidden = false;
