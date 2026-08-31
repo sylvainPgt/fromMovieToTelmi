@@ -101,7 +101,12 @@ def build_nodes(count: int) -> dict:
 
 
 def build_notes(chapters: list[dict]) -> dict:
-    """Résumé de chaque scène, affiché dans Telmi Sync (sans effet sur la lecture)."""
+    """Résumé de chaque scène, affiché dans le Studio de Telmi Sync.
+
+    La documentation décrit une entrée « pour chaque scène de l'histoire » :
+    on en écrit donc une par chapitre ET une pour backStage, faute de quoi le
+    Studio cherche une note qui n'existe pas.
+    """
     notes = {}
     for index, chapter in enumerate(chapters):
         text = (chapter.get("text") or "").strip()
@@ -112,6 +117,7 @@ def build_notes(chapters: list[dict]) -> dict:
             "notes": text,
             "color": NOTE_COLORS[index % len(NOTE_COLORS)],
         }
+    notes["backStage"] = {"title": "Retour", "notes": "", "color": "blue"}
     return notes
 
 
@@ -164,10 +170,10 @@ def create_pack(
         "version": 2,
         "age": str(age),
     }
-    if category:
-        metadata["category"] = category
-    if description:
-        metadata["description"] = description
+    # Ces deux champs sont facultatifs, mais un lecteur qui les suppose
+    # présents planterait sur leur absence : on les écrit toujours.
+    metadata["category"] = category or "Mes histoires"
+    metadata["description"] = description or title
     (pack_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
