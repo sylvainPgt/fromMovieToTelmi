@@ -223,6 +223,9 @@ function scheduleSegment() {
 for (const id of ['opt-target', 'opt-tol', 'opt-weight']) {
   $(id).oninput = scheduleSegment;
 }
+for (const id of ['opt-from', 'opt-to']) {
+  $(id).oninput = scheduleSegment;
+}
 
 async function segment() {
   if (!state.analysed) return;
@@ -230,6 +233,8 @@ async function segment() {
     target: Number($('opt-target').value),
     tolerance: Number($('opt-tol').value),
     boundary_weight: Number($('opt-weight').value),
+    trim_start: $('opt-from').value,
+    trim_end: $('opt-to').value,
   });
   const body = $('cut-table').querySelector('tbody');
 
@@ -403,3 +408,113 @@ function makeShot(chapter, shot, bande) {
   };
   return bouton;
 }
+
+
+/* ---------- Étape 4 : couverture et annonce du titre ---------- */
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function setStatus(element, message, failed) {
+  element.textContent = message;
+  element.classList.toggle('ko', Boolean(failed));
+  element.hidden = !message;
+}
+
+async function sendFile(route, blob, statusElement, working) {
+  setStatus(statusElement, working, false);
+  try {
+    const answer = await api(route, { data: await readAsDataUrl(blob) });
+    if (answer.error) {
+      setStatus(statusElement, answer.error, true);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    setStatus(statusElement, `Envoi impossible : ${error}`, true);
+    return false;
+  }
+}
+
+$('opt-cover').onchange = async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const ok = await sendFile('/api/cover', file, $('cover-status'), 'Conversion…');
+  if (!ok) return;
+  setStatus($('cover-status'), 'Couverture prête (640x480).', false);
+  const preview = $('cover-preview');
+  preview.src = URL.createObjectURL(file);
+  preview.hidden = false;
+};
+
+$('opt-title-audio').onchange = async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  await useTitleAudio(file, 'Conversion du fichier…');
+};
+
+async function useTitleAudio(blob, working) {
+  const ok = await sendFile('/api/title-audio', blob, $('title-audio-status'), working);
+  if (!ok) return;
+  setStatus($('title-audio-status'), 'Annonce prête (MP3 44100 Hz).', false);
+  const preview = $('title-audio-preview');
+  preview.src = URL.createObjectURL(blob);
+  preview.hidden = false;
+}
+
+/* Enregistrement au micro. Le navigateur autorise le micro sur 127.0.0.1,
+   considéré comme une origine sûre au même titre que https. */
+let recorder = null;
+let recordedChunks = [];
+let recordTimer = null;
+
+$('rec-btn').onclick = async () => {
+  if (recorder && recorder.state === 'recording') {
+    recorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return setStatus($('title-audio-status'),
+      "Ce navigateur ne permet pas l'enregistrement. Choisissez un fichier audio.", true);
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (error) {
+    return setStatus($('title-audio-status'),
+      `Micro indisponible : ${error.name === 'NotAllowedError'
+        ? "l'accès a été refusé" : error.message}`, true);
+  }
+
+  recordedChunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (event) => {
+    if (event.data.size) recordedChunks.push(event.data);
+  };
+  recorder.onstop = async () => {
+    clearInterval(recordTimer);
+    stream.getTracks().forEach((track) => track.stop());
+    $('rec-btn').textContent = '🎙 Enregistrer';
+    $('rec-btn').classList.remove('recording');
+    $('rec-time').hidden = true;
+    const blob = new Blob(recordedChunks, { type: recorder.mimeType });
+    await useTitleAudio(blob, "Conversion de l'enregistrement…");
+  };
+
+  recorder.start();
+  const startedAt = Date.now();
+  $('rec-btn').textContent = '⏹ Arrêter';
+  $('rec-btn').classList.add('recording');
+  $('rec-time').hidden = false;
+  recordTimer = setInterval(() => {
+    $('rec-time').textContent = `${Math.round((Date.now() - startedAt) / 1000)} s`;
+  }, 250);
+  setStatus($('title-audio-status'), '', false);
+};

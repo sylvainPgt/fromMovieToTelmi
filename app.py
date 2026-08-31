@@ -10,6 +10,7 @@ Rien ne sort de votre ordinateur : le serveur n'écoute que sur 127.0.0.1.
     python app.py
 """
 
+import base64
 import contextlib
 import json
 import re
@@ -32,7 +33,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from build_pack import create_pack  # noqa: E402
 from ffmpeg_tools import (  # noqa: E402
-    detect_silences, extract_audio_segment, extract_full_audio, media_duration,
+    convert_to_mp3, detect_silences, extract_audio_segment, extract_full_audio,
+    media_duration,
 )
 from split_chapters import format_time, plan_chapters  # noqa: E402
 from subtitles import parse_srt  # noqa: E402
@@ -394,10 +396,14 @@ def generate_worker(params: dict) -> None:
         if params.get("pack"):
             set_job(label="Assemblage du pack Telmi...", progress=50.0)
             pack_dir = workdir / "pack"
+            couverture = workdir / "couverture.png"
+            titre = workdir / "titre.mp3"
             pack_report = create_pack(
                 chapters, workdir, pack_dir,
                 title=params.get("title") or video.stem,
                 age=str(params.get("age", "5")),
+                title_audio=titre if titre.is_file() else None,
+                cover=couverture if couverture.is_file() else None,
             )
             with LOCK:
                 STATE["pack_dir"] = pack_dir
@@ -474,6 +480,75 @@ def api_choose(params: dict) -> dict:
     with LOCK:
         STATE["chapters"][position]["chosen_time"] = moment
     return {"ok": True, "index": position, "time": moment}
+
+
+# Au-delà, c'est sûrement une erreur de manipulation
+MAX_UPLOAD = 25 * 1024 * 1024
+
+
+def decode_upload(params: dict) -> bytes:
+    """Décode un fichier envoyé par la page, en refusant l'excessif."""
+    brut = params.get("data") or ""
+    # Les envois du navigateur arrivent en « data:<type>;base64,<contenu> »
+    if "," in brut[:120] and brut[:5] == "data:":
+        brut = brut.split(",", 1)[1]
+    try:
+        contenu = base64.b64decode(brut, validate=False)
+    except Exception:
+        raise RuntimeError("Fichier illisible.")
+    if not contenu:
+        raise RuntimeError("Fichier vide.")
+    if len(contenu) > MAX_UPLOAD:
+        raise RuntimeError("Fichier trop volumineux (25 Mo maximum).")
+    return contenu
+
+
+def api_cover(params: dict) -> dict:
+    """Enregistre une image de couverture, ramenée au format Telmi."""
+    state = snapshot(STATE)
+    if not state["workdir"]:
+        return {"error": "Analysez d'abord un film."}
+    try:
+        contenu = decode_upload(params)
+        from io import BytesIO
+
+        from PIL import Image, ImageOps
+
+        with Image.open(BytesIO(contenu)) as image:
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            couverture = ImageOps.fit(
+                image, (640, 480), method=Image.Resampling.LANCZOS,
+                centering=(0.5, 0.5),
+            )
+            chemin = Path(state["workdir"]) / "couverture.png"
+            couverture.save(chemin, "PNG")
+    except ImportError:
+        return {"error": "Pillow est nécessaire : pip install -r requirements.txt"}
+    except RuntimeError as erreur:
+        return {"error": str(erreur)}
+    except Exception:
+        return {"error": "Ce fichier n'est pas une image exploitable."}
+    return {"ok": True, "name": "couverture.png"}
+
+
+def api_title_audio(params: dict) -> dict:
+    """Enregistre l'annonce du titre, convertie au format Telmi."""
+    state = snapshot(STATE)
+    if not state["workdir"]:
+        return {"error": "Analysez d'abord un film."}
+    workdir = Path(state["workdir"])
+    try:
+        contenu = decode_upload(params)
+        brut = workdir / "titre_source"
+        brut.write_bytes(contenu)
+        convert_to_mp3(brut, workdir / "titre.mp3")
+        brut.unlink(missing_ok=True)
+    except RuntimeError as erreur:
+        return {"error": str(erreur)}
+    except Exception:
+        return {"error": "Cet enregistrement n'a pas pu être converti."}
+    return {"ok": True, "name": "titre.mp3"}
 
 
 def _srt_time(seconds: float) -> str:
@@ -575,6 +650,16 @@ def api_browse(path_value: str | None) -> dict:
             "dirs": directories, "files": files}
 
 
+def read_instant(value, fallback: float) -> float:
+    """Lit un instant saisi « 1:52:12 », « 4:30 » ou en secondes."""
+    if value is None or value == "":
+        return fallback
+    try:
+        return max(0.0, _parse_clock(str(value).strip()))
+    except (ValueError, AttributeError):
+        return fallback
+
+
 def api_segment(params: dict) -> dict:
     """Recalcule le découpage. Instantané : les silences sont déjà en mémoire."""
     state = snapshot(STATE)
@@ -592,10 +677,22 @@ def api_segment(params: dict) -> dict:
             f"({format_time(target)}). Réduisez la durée visée."
         )}
 
+    # Rognage : écarter un générique de début ou de fin sans réanalyser
+    begin = read_instant(params.get("trim_start"), 0.0)
+    finish = read_instant(params.get("trim_end"), duration)
+    if finish <= begin:
+        return {"error": "La fin de l'histoire doit venir après son début."}
+    if finish - begin <= target:
+        return {"error": (
+            f"Il ne reste que {format_time(finish - begin)} entre le début et la "
+            f"fin retenus, moins qu'un chapitre ({format_time(target)})."
+        )}
+
     chapters = plan_chapters(
         duration, state["silences"], state["speech"], target,
         tolerance=float(params.get("tolerance", 0.5)),
         boundary_weight=float(params.get("boundary_weight", 0.25)),
+        begin=begin, finish=finish,
     )
     if not chapters:
         return {"error": (
@@ -615,6 +712,7 @@ def api_segment(params: dict) -> dict:
         ],
         "target_label": format_time(target),
         "weak": sum(1 for c in chapters if c["cut_quality"] <= 0.0),
+        "kept_label": format_time(finish - begin),
     }
 
 
@@ -674,6 +772,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(api_segment(payload))
         if route == "/api/candidates":
             return self._send_json(start_job(candidates_worker, payload))
+        if route == "/api/cover":
+            return self._send_json(api_cover(payload))
+        if route == "/api/title-audio":
+            return self._send_json(api_title_audio(payload))
         if route == "/api/choose":
             return self._send_json(api_choose(payload))
         if route == "/api/generate":
