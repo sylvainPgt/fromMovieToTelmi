@@ -231,7 +231,19 @@ def analyze_worker(params: dict) -> None:
         workdir.mkdir(parents=True, exist_ok=True)
 
         speech = []
+        speech_reused = False
+        srt_path = workdir / "dialogues.srt"
         if params.get("transcribe"):
+            # Une transcription déjà calculée est réutilisée telle quelle :
+            # elle coûte des dizaines de minutes, et ne change pas d'un essai
+            # de réglages à l'autre. Pour la refaire, supprimer dialogues.srt.
+            if srt_path.is_file() and srt_path.stat().st_size > 0:
+                set_job(label="Transcription déjà calculée, réutilisée...",
+                        progress=100.0)
+                speech = parse_srt(srt_path)
+                speech_reused = bool(speech)
+
+        if params.get("transcribe") and not speech:
             wav = workdir / "audio_transcription.wav"
             set_job(label="Extraction de la bande son...", progress=0.0)
             extract_full_audio(
@@ -289,7 +301,6 @@ def analyze_worker(params: dict) -> None:
                 result = model.transcribe(
                     str(wav), language="fr", fp16=False, verbose=False
                 )
-            srt_path = workdir / "dialogues.srt"
             with open(srt_path, "w", encoding="utf-8") as handle:
                 for number, segment in enumerate(result["segments"], start=1):
                     handle.write(
@@ -318,6 +329,7 @@ def analyze_worker(params: dict) -> None:
                 "duration_label": format_time(duration),
                 "silences": len(silences),
                 "speech": len(speech),
+                "speech_reused": speech_reused,
                 "workdir": str(workdir),
                 "name": video.name,
             },
