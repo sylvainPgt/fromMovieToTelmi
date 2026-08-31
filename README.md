@@ -62,11 +62,12 @@ Double-cliquez sur le lanceur correspondant à votre système :
 
 Votre navigateur s'ouvre sur l'interface. Tout se passe **sur votre machine** : le serveur n'écoute que sur `127.0.0.1`, aucun fichier n'est envoyé nulle part.
 
-L'interface vous guide en trois étapes :
+L'interface vous guide en quatre étapes :
 
-1. **Le film** — choisissez-le dans l'explorateur intégré, cochez la transcription si vous la voulez, puis lancez l'analyse (avec barre de progression).
+1. **Le film** — choisissez-le dans l'explorateur intégré (les lecteurs `C:`, `D:` sont listés, et vous pouvez coller un chemin), cochez la transcription si vous la voulez, puis lancez l'analyse. Une transcription déjà calculée est réutilisée : régler le seuil de silence ne coûte plus que quelques minutes.
 2. **Le découpage** — bougez le curseur de durée : le tableau des chapitres **se recalcule instantanément**, sans réanalyser le film. Chaque coupe est étiquetée `franche`, `correcte` ou `arbitraire` pour que vous voyiez d'un coup d'œil ce qui mérite un ajustement.
-3. **Le pack** — donnez un titre, et l'application encode les MP3, choisit une image par chapitre et assemble le dossier prêt pour Telmi Sync.
+3. **Les images** — l'application propose une planche par chapitre et pré-sélectionne la plus lisible. Cliquez pour en choisir une autre. Étape facultative : sans elle, la pré-sélection s'applique d'office.
+4. **Le pack** — donnez un titre, et l'application encode les MP3, reprend vos images en 640x480 et assemble le dossier prêt pour Telmi Sync.
 
 Tout est écrit dans un dossier `<nom_du_film>_telmi/` à côté de votre film.
 
@@ -134,7 +135,7 @@ python scripts/split_chapters.py audio_du_film.wav -d 300 --srt audio_du_film.sr
 python scripts/extract_chapter_images.py mon_film.mkv chapitres/chapters.json
 ```
 
-Une image ne vous plaît pas ? Remplacez le PNG correspondant dans `chapitres/` par le vôtre, en 640x480.
+Une image ne vous plaît pas ? Remplacez le PNG correspondant dans `chapitres/` par le vôtre, en 640x480. L'application, elle, propose une planche de vignettes par chapitre où choisir d'un clic.
 
 ### 5. Assembler le pack Telmi
 

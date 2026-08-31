@@ -184,6 +184,7 @@ $('analyze-btn').onclick = async () => {
     $('cut-summary').textContent = pieces.join(' · ') + '.';
 
     $('step-cut').hidden = false;
+    $('step-images').hidden = false;
     $('step-build').hidden = false;
     // Une durée de chapitre plus longue que le film n'a pas de sens
     const slider = $('opt-target');
@@ -263,6 +264,9 @@ async function segment() {
     body.appendChild(tr);
   }
 
+  // Les chapitres ont changé : les propositions d'images ne valent plus rien
+  $('galleries').innerHTML = '';
+
   const warn = $('cut-warn');
   if (data.weak > 0) {
     warn.textContent = `${data.weak} coupe${data.weak > 1 ? 's' : ''} ne tombe`
@@ -274,7 +278,7 @@ async function segment() {
   }
 }
 
-/* ---------- Étape 3 : génération ---------- */
+/* ---------- Étape 3 : choix des images ---------- */
 
 $('build-btn').onclick = async () => {
   const started = await api('/api/generate', {
@@ -326,3 +330,75 @@ $('build-btn').onclick = async () => {
 };
 
 refreshLabels();
+
+
+/* ---------- Étape 3 : choix des images ---------- */
+
+$('opt-percha').oninput = (event) => {
+  $('out-percha').textContent = event.target.value;
+};
+
+$('candidates-btn').onclick = async () => {
+  const started = await api('/api/candidates', {
+    per_chapter: Number($('opt-percha').value),
+  });
+  if (!started.ok) return showError($('candidates-error'), started.error);
+
+  $('candidates-btn').disabled = true;
+  followJob($('candidates-progress'), $('candidates-error'), (result) => {
+    $('candidates-btn').disabled = false;
+    drawGalleries(result.chapters);
+  });
+};
+
+function drawGalleries(chapters) {
+  const container = $('galleries');
+  container.innerHTML = '';
+
+  for (const chapter of chapters) {
+    const bloc = document.createElement('div');
+    bloc.className = 'gallery';
+
+    const titre = document.createElement('h3');
+    titre.textContent = `Chapitre ${chapter.index + 1}`;
+    const detail = document.createElement('span');
+    detail.textContent = `${chapter.start_label} · ${chapter.duration_label}`;
+    titre.appendChild(detail);
+    bloc.appendChild(titre);
+
+    const bande = document.createElement('div');
+    bande.className = 'strip';
+    for (const shot of chapter.candidates) {
+      bande.appendChild(makeShot(chapter, shot, bande));
+    }
+    bloc.appendChild(bande);
+    container.appendChild(bloc);
+  }
+}
+
+function makeShot(chapter, shot, bande) {
+  const bouton = document.createElement('button');
+  bouton.className = 'shot';
+  bouton.type = 'button';
+  // aria-pressed porte la sélection : lisible par le lecteur d'écran
+  // autant que par la feuille de style
+  bouton.setAttribute('aria-pressed', String(shot.time === chapter.chosen_time));
+
+  const img = document.createElement('img');
+  img.src = `/api/thumb?name=${encodeURIComponent(shot.file)}`;
+  img.alt = `Image à ${shot.label}`;
+  img.loading = 'lazy';
+
+  const legende = document.createElement('figcaption');
+  legende.textContent = shot.label;
+  bouton.append(img, legende);
+
+  bouton.onclick = async () => {
+    for (const autre of bande.querySelectorAll('.shot')) {
+      autre.setAttribute('aria-pressed', 'false');
+    }
+    bouton.setAttribute('aria-pressed', 'true');
+    await api('/api/choose', { index: chapter.index, time: shot.time });
+  };
+  return bouton;
+}

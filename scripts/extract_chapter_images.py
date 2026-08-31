@@ -27,6 +27,10 @@ DARK_LIMIT = 30.0
 BRIGHT_LIMIT = 30.0
 # En dessous de ce score, l'image est plate : on le signale à l'utilisateur
 LOW_DETAIL_SCORE = 12.0
+# Taille des vignettes de proposition : même cadrage que l'image finale,
+# pour que ce que l'on choisit soit exactement ce que l'on obtient
+THUMB_SIZE = (320, 240)
+CANDIDATES_DIR = "propositions"
 
 
 def format_time(seconds: float) -> str:
@@ -70,12 +74,72 @@ def best_frame(capture: cv2.VideoCapture, start: float, end: float, samples: int
 
 def save_png(frame: np.ndarray, destination: Path) -> None:
     """Recadre au centre en 640x480 sans déformation et enregistre en PNG."""
-    image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    fitted = ImageOps.fit(
-        image, TARGET_SIZE, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5)
-    )
     destination.parent.mkdir(parents=True, exist_ok=True)
-    fitted.save(destination, "PNG")
+    fit_image(frame, TARGET_SIZE).save(destination, "PNG")
+
+
+def fit_image(frame: np.ndarray, size) -> Image.Image:
+    """Recadre au centre à la taille demandée, sans déformation."""
+    image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    return ImageOps.fit(
+        image, size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5)
+    )
+
+
+def propose_candidates(
+    video: Path, chapters: list[dict], output_dir: Path,
+    per_chapter: int = 12, on_progress=None,
+) -> dict:
+    """Extrait plusieurs images par chapitre et les propose au choix.
+
+    Les vignettes couvrent tout le chapitre, bords exclus, et la mieux notée
+    est pré-sélectionnée : il ne reste qu'à corriger là où l'on n'est pas
+    d'accord avec la machine.
+    """
+    capture = cv2.VideoCapture(str(video))
+    if not capture.isOpened():
+        raise RuntimeError(f"Impossible d'ouvrir la vidéo : {video}")
+
+    dossier = output_dir / CANDIDATES_DIR
+    dossier.mkdir(parents=True, exist_ok=True)
+    total = 0
+
+    for position, chapter in enumerate(chapters):
+        debut, fin = chapter["start"], chapter["end"]
+        # On evite les tout premiers et derniers instants : souvent des
+        # transitions ou des fondus
+        span_debut = debut + (fin - debut) * 0.05
+        span_fin = debut + (fin - debut) * 0.95
+        pas = (span_fin - span_debut) / max(1, per_chapter - 1)
+
+        propositions = []
+        for index in range(per_chapter):
+            moment = span_debut + index * pas
+            capture.set(cv2.CAP_PROP_POS_MSEC, moment * 1000)
+            success, frame = capture.read()
+            if not success or frame is None:
+                continue
+            nom = f"{CANDIDATES_DIR}/ch{position + 1:02d}_{index + 1:02d}.jpg"
+            fit_image(frame, THUMB_SIZE).save(
+                output_dir / nom, "JPEG", quality=82
+            )
+            propositions.append({
+                "time": round(moment, 3),
+                "file": nom,
+                "score": round(frame_score(frame), 1),
+                "label": format_time(moment),
+            })
+            total += 1
+
+        chapter["candidates"] = propositions
+        if propositions:
+            meilleure = max(propositions, key=lambda c: c["score"])
+            chapter["chosen_time"] = meilleure["time"]
+        if on_progress:
+            on_progress(position + 1, len(chapters))
+
+    capture.release()
+    return {"written": total, "chapters": len(chapters)}
 
 
 def generate_images(
@@ -103,9 +167,18 @@ def generate_images(
     written, warnings, details = 0, [], []
     for position, chapter in enumerate(chapters):
         name = Path(chapter["file"]).stem + ".png"
-        frame, score, moment = best_frame(
-            capture, chapter["start"], chapter["end"], samples
-        )
+        choisi = chapter.get("chosen_time")
+        if choisi is not None:
+            # Image retenue a la main : on la reprend telle quelle, en pleine
+            # qualite cette fois
+            capture.set(cv2.CAP_PROP_POS_MSEC, float(choisi) * 1000)
+            success, frame = capture.read()
+            frame = frame if success else None
+            score, moment = (frame_score(frame) if frame is not None else 0.0), float(choisi)
+        else:
+            frame, score, moment = best_frame(
+                capture, chapter["start"], chapter["end"], samples
+            )
         if frame is None:
             reason = (
                 "ce passage est au-delà de la fin de la vidéo"
