@@ -156,6 +156,10 @@
     <label class="inline">Âge conseillé
       <input type="number" id="opt-age" value="5" min="1" max="12">
     </label>
+    <label class="inline">Collection
+      <input type="text" id="opt-category" value="Mes histoires" size="20">
+      <span class="hint">Le préfixe du nom de dossier, comme « Radio France ».</span>
+    </label>
 
     <label class="check">
       <input type="checkbox" id="opt-images" checked>
@@ -192,6 +196,12 @@
         <audio id="title-audio-preview" controls hidden></audio>
       </div>
     </div>
+
+    <label class="check" id="install-row" hidden>
+      <input type="checkbox" id="opt-install" checked>
+      <span>Installer directement dans Telmi Sync
+        <em id="install-path"></em></span>
+    </label>
 
     <button class="btn primary" id="build-btn">Générer</button>
     <div class="progress" id="build-progress" hidden>

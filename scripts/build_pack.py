@@ -12,15 +12,55 @@ Exemple :
 
 import argparse
 import json
+import re
 import shutil
 import sys
-import uuid
+import time
+import unicodedata
 from pathlib import Path
 
 from ffmpeg_tools import make_silent_mp3
 
+# Longueur à laquelle Telmi Sync tronque le titre dans le nom de dossier,
+# déduite des histoires déjà installées (deux s'arrêtent net à 32 caractères)
+TITLE_IN_FOLDER = 32
+
 # Couleurs acceptées par Telmi Sync pour les vignettes de scènes
 NOTE_COLORS = ("blue", "pink", "purple3", "red2")
+
+
+def telmi_uuid() -> str:
+    """Fabrique un identifiant à la manière de Telmi.
+
+    Les histoires installées portent un identifiant « xxxxxx-<horodatage> »,
+    où l'horodatage est le nombre de millisecondes depuis 1970, en
+    hexadécimal. Le préfixe reprend celui de l'exemple de la documentation.
+    """
+    return f"ffffff-{int(time.time() * 1000):x}"
+
+
+def folder_title(title: str) -> str:
+    """Nettoie un titre pour l'insérer dans un nom de dossier.
+
+    Les histoires installées sont sans accent ni apostrophe et tronquées
+    à 32 caractères.
+    """
+    sans_accent = "".join(
+        lettre for lettre in unicodedata.normalize("NFKD", title)
+        if not unicodedata.combining(lettre)
+    )
+    propre = re.sub(r"[^A-Za-z0-9 \-]", " ", sans_accent)
+    return re.sub(r"\s+", " ", propre).strip()[:TITLE_IN_FOLDER].strip()
+
+
+def pack_folder_name(title: str, age, identifier: str, category: str | None = None) -> str:
+    """Nom de dossier attendu par Telmi Sync : éditeur_âge_titre_identifiant."""
+    try:
+        age_texte = f"{int(age):02d}"
+    except (TypeError, ValueError):
+        age_texte = "00"
+    return f"{(category or 'Mes histoires').strip()}_{age_texte}_" \
+           f"{folder_title(title)}_{identifier}"
 
 
 def build_nodes(count: int) -> dict:
@@ -79,12 +119,14 @@ def create_pack(
     chapters: list[dict], source_dir: Path, pack_dir: Path, title: str,
     age: str = "5", category: str | None = None, description: str | None = None,
     title_audio: Path | None = None, cover: Path | None = None,
+    identifier: str | None = None,
 ) -> dict:
     """Écrit le pack complet sur le disque.
 
     Retourne un compte rendu : chapitres sans image, et si title.mp3 est
     resté un simple silence. Lève FileNotFoundError si un audio manque.
     """
+    identifier = identifier or telmi_uuid()
     audios_dir = pack_dir / "audios"
     images_dir = pack_dir / "images"
     audios_dir.mkdir(parents=True, exist_ok=True)
@@ -117,7 +159,7 @@ def create_pack(
 
     metadata = {
         "title": title,
-        "uuid": str(uuid.uuid4()),
+        "uuid": identifier,
         "image": "title.png",
         "version": 2,
         "age": str(age),
@@ -152,6 +194,8 @@ def create_pack(
         "silent_title": silent_title,
         "has_cover": has_cover,
         "pack_dir": str(pack_dir),
+        "uuid": identifier,
+        "folder_name": pack_folder_name(title, age, identifier, category),
     }
 
 

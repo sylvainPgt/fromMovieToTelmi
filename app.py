@@ -16,6 +16,7 @@ import json
 import re
 import mimetypes
 import os
+import shutil
 import socket
 import string
 import time
@@ -31,7 +32,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from build_pack import create_pack  # noqa: E402
+from build_pack import create_pack, pack_folder_name, telmi_uuid  # noqa: E402
 from ffmpeg_tools import (  # noqa: E402
     convert_to_mp3, detect_silences, extract_audio_segment, extract_full_audio,
     media_duration,
@@ -395,16 +396,39 @@ def generate_worker(params: dict) -> None:
         pack_report = None
         if params.get("pack"):
             set_job(label="Assemblage du pack Telmi...", progress=50.0)
-            pack_dir = workdir / "pack"
             couverture = workdir / "couverture.png"
             titre = workdir / "titre.mp3"
+            nom_histoire = params.get("title") or video.stem
+            age = str(params.get("age", "5"))
+            categorie = (params.get("category") or "Mes histoires").strip()
+
+            # Telmi Sync nomme ses dossiers « éditeur_âge_titre_identifiant » :
+            # on produit directement un dossier conforme, prêt à déposer.
+            identifiant = telmi_uuid()
+            pack_dir = workdir / pack_folder_name(
+                nom_histoire, age, identifiant, categorie
+            )
             pack_report = create_pack(
                 chapters, workdir, pack_dir,
-                title=params.get("title") or video.stem,
-                age=str(params.get("age", "5")),
+                title=nom_histoire, age=age, category=categorie,
                 title_audio=titre if titre.is_file() else None,
                 cover=couverture if couverture.is_file() else None,
+                identifier=identifiant,
             )
+
+            if params.get("install"):
+                destination = telmi_stories_dir()
+                if destination is None:
+                    pack_report["installed"] = None
+                    pack_report["install_error"] = (
+                        "Dossier de Telmi Sync introuvable : copiez le pack "
+                        "vous-même dans .telmi/stories."
+                    )
+                else:
+                    cible = destination / pack_dir.name
+                    shutil.rmtree(cible, ignore_errors=True)
+                    shutil.copytree(pack_dir, cible)
+                    pack_report["installed"] = str(cible)
             with LOCK:
                 STATE["pack_dir"] = pack_dir
 
@@ -420,6 +444,12 @@ def generate_worker(params: dict) -> None:
     except Exception as error:  # noqa: BLE001
         traceback.print_exc()
         set_job(state="error", error=str(error), label="", progress=0.0)
+
+
+def telmi_stories_dir() -> Path | None:
+    """Dossier où Telmi Sync range ses histoires, s'il existe."""
+    dossier = Path.home() / ".telmi" / "stories"
+    return dossier if dossier.is_dir() else None
 
 
 def candidates_worker(params: dict) -> None:
@@ -751,6 +781,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._serve_static("index.html")
         if route == "/api/browse":
             return self._send_json(api_browse((query.get("path") or [None])[0]))
+        if route == "/api/telmi":
+            dossier = telmi_stories_dir()
+            return self._send_json({
+                "found": dossier is not None,
+                "path": str(dossier) if dossier else None,
+            })
         if route == "/api/job":
             job = snapshot(JOB)
             if job.get("started"):
