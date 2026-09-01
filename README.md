@@ -18,13 +18,14 @@ film.mkv ─┬─► audio ──► découpage en chapitres ──► MP3 par 
 
 ### 1. Récupérer le projet
 
-Sur GitHub, branche `claude/project-review-improve-36izov` : bouton **Code → Download ZIP**, puis décompressez le dossier où vous voulez. En ligne de commande :
+Bouton **Code → Download ZIP** sur GitHub, puis décompressez le dossier où vous voulez. En ligne de commande :
 
 ```bash
 git clone https://github.com/sylvainPgt/fromMovieToTelmi.git
 cd fromMovieToTelmi
-git checkout claude/project-review-improve-36izov
 ```
+
+Tout est sur `main`, il n'y a aucune branche à basculer.
 
 ### 2. Python
 
