@@ -3,8 +3,9 @@
 
 Produit l'arborescence attendue par Telmi OS : metadata.json, nodes.json,
 notes.json, title.mp3, title.png, puis les dossiers audios/ et images/.
-Les chapitres s'enchaînent automatiquement les uns après les autres
-(autoplay), et le dernier clôt l'histoire.
+L'histoire s'ouvre sur un menu des chapitres, comme les histoires de la
+collection « Telmi - Histoires » ; une fois un chapitre choisi, les
+suivants s'enchaînent d'eux-mêmes et la fin rend la main à la Telmi.
 
 Exemple :
     python scripts/build_pack.py chapitres/chapters.json -t "Mon histoire" -o pack
@@ -63,52 +64,72 @@ def pack_folder_name(title: str, age, identifier: str, category: str | None = No
            f"{folder_title(title)}_{identifier}"
 
 
-def build_nodes(count: int, show_image: bool = True) -> dict:
+def build_nodes(count: int, show_image: bool = True, has_cover: bool = True) -> dict:
     """Construit le graphe d'une histoire à menu de chapitres.
 
-    Conventions relevées dans les histoires Telmi installées : chaque scène
-    s'appelle sN et ses fichiers portent son nom (sN.mp3, sN.png), chaque
-    action s'appelle aN, et aucun fichier n'est partagé entre deux scènes.
+    Le graphe reprend trait pour trait celui des histoires classiques de la
+    collection « Telmi - Histoires » (relevé dans un nodes.json installé) :
 
-    Les scènes s0 à s(N-1) forment le menu (action a0) : image et courte
-    annonce, que l'on parcourt aux flèches tant que l'on n'a pas validé.
-    Valider ouvre la scène d'écoute s(N+i) par l'action a(i+1) ; sa fin
-    enchaîne sur le chapitre suivant, et la dernière clôt l'histoire.
-    Sans image sur la scène d'écoute, l'écran n'a rien à afficher.
+    - s0 : l'introduction, couverture à l'écran et court carillon, qui
+      enchaîne d'elle-même sur le menu ; le bouton maison y quitte l'histoire.
+    - s1 à sN : le menu (action a1), une scène par chapitre que l'on parcourt
+      à la molette ; chacune montre son image et joue son annonce.
+    - s(N+1) à s(2N) : l'écoute des chapitres (actions a2 à a(N+1)), en
+      pause possible ; chaque chapitre enchaîne sur le suivant, et la maison
+      ramène au menu sur le chapitre en cours. Les histoires officielles n'y
+      affichent aucune image : c'est le mode « écran éteint ».
+    - s(2N+1) : la fin, couverture à l'écran, qui rend la main à la Telmi.
+
+    Chaque fichier porte le nom de sa scène (sN.mp3, sN.png).
     """
-    stages: dict[str, dict] = {}
-    actions: dict[str, list] = {"a0": [{"stage": f"s{i}"} for i in range(count)]}
+    cover = "s0.png" if has_cover else None
+    stages: dict[str, dict] = {
+        "s0": {
+            "image": cover,
+            "audio": "s0.mp3",
+            "ok": {"action": "a1", "index": 0},
+            "home": None,
+            "control": {"wheel": False, "ok": True, "home": True,
+                        "pause": False, "autoplay": True},
+        },
+    }
+    actions: dict[str, list] = {
+        "a0": [{"stage": "s0"}],
+        "a1": [{"stage": f"s{i}"} for i in range(1, count + 1)],
+    }
+    end_action = f"a{count + 2}"
 
-    for index in range(count):
-        is_last = index == count - 1
-        play = count + index
-        stages[f"s{index}"] = {
-            "image": f"s{index}.png",
-            "audio": f"s{index}.mp3",
-            "ok": {"action": f"a{index + 1}", "index": 0},
-            "home": {"action": "backAction", "index": 0},
-            "control": {"ok": True, "home": True, "autoplay": False},
+    for number in range(1, count + 1):
+        play = count + number
+        stages[f"s{number}"] = {
+            "image": f"s{number}.png",
+            "audio": f"s{number}.mp3",
+            "ok": {"action": f"a{number + 1}", "index": 0},
+            "home": {"action": "a0", "index": 0},
+            "control": {"wheel": True, "ok": True, "home": True,
+                        "pause": False, "autoplay": False},
         }
+        next_action = f"a{number + 2}" if number < count else end_action
         stages[f"s{play}"] = {
             "image": f"s{play}.png" if show_image else None,
             "audio": f"s{play}.mp3",
-            "ok": None if is_last else {"action": f"a{index + 2}", "index": 0},
-            "home": {"action": "backAction", "index": 0},
-            # Comme la scène finale des histoires installées : plus
-            # d'enchaînement, mais le bouton OK reste actif
-            "control": {"ok": True, "home": True, "autoplay": not is_last},
+            "ok": {"action": next_action, "index": 0},
+            "home": {"action": "a1", "index": number - 1},
+            "control": {"wheel": False, "ok": False, "home": True,
+                        "pause": True, "autoplay": True},
         }
-        actions[f"a{index + 1}"] = [{"stage": f"s{play}"}]
+        actions[f"a{number + 1}"] = [{"stage": f"s{play}"}]
 
-    stages["backStage"] = {
-        "image": None,
-        "audio": None,
-        "ok": {"action": "backChildAction", "index": 0},
-        "home": {"action": "backAction", "index": 0},
-        "control": {"ok": True, "home": False, "autoplay": True},
+    end_stage = f"s{2 * count + 1}"
+    stages[end_stage] = {
+        "image": cover,
+        "audio": f"{end_stage}.mp3",
+        "ok": None,
+        "home": None,
+        "control": {"wheel": False, "ok": False, "home": False,
+                    "pause": False, "autoplay": False},
     }
-    actions["backAction"] = [{"stage": "backStage"}]
-    actions["backChildAction"] = []
+    actions[end_action] = [{"stage": end_stage}]
 
     return {
         "startAction": {"action": "a0", "index": 0},
@@ -120,20 +141,21 @@ def build_nodes(count: int, show_image: bool = True) -> dict:
 def build_notes(chapters: list[dict]) -> dict:
     """Résumé de chaque scène, affiché dans le Studio de Telmi Sync.
 
-    La documentation décrit une entrée « pour chaque scène de l'histoire » :
-    on en écrit donc une par chapitre ET une pour backStage, faute de quoi le
-    Studio cherche une note qui n'existe pas.
+    Le Studio attend une entrée pour chaque scène du graphe, introduction et
+    fin comprises, faute de quoi il cherche une note qui n'existe pas.
     """
-    notes = {}
+    count = len(chapters)
+    notes = {"s0": {"title": "Introduction", "notes": "", "color": "blue"}}
     for index, chapter in enumerate(chapters):
+        number = index + 1
         text = (chapter.get("text") or "").strip()
         if len(text) > 500:
             text = text[:497].rstrip() + "..."
-        title = chapter.get("title") or f"Chapitre {index + 1}"
+        title = chapter.get("title") or f"Chapitre {number}"
         color = NOTE_COLORS[index % len(NOTE_COLORS)]
-        notes[f"s{index}"] = {"title": f"Menu · {title}", "notes": "", "color": color}
-        notes[f"s{len(chapters) + index}"] = {"title": title, "notes": text, "color": color}
-    notes["backStage"] = {"title": "Retour", "notes": "", "color": "blue"}
+        notes[f"s{number}"] = {"title": f"Menu · {title}", "notes": "", "color": color}
+        notes[f"s{count + number}"] = {"title": title, "notes": text, "color": color}
+    notes[f"s{2 * count + 1}"] = {"title": "Fin", "notes": "", "color": "blue"}
     return notes
 
 
@@ -147,7 +169,7 @@ def create_pack(
     """Écrit le pack complet sur le disque.
 
     chapter_audios associe un numéro de chapitre (à partir de 0) à un audio
-    qui l'annonce dans le menu ; les autres reçoivent un carillon commun.
+    qui l'annonce dans le menu ; les autres reçoivent le carillon.
 
     Retourne un compte rendu : chapitres sans image, et si title.mp3 est
     resté un simple silence. Lève FileNotFoundError si un audio manque.
@@ -161,9 +183,13 @@ def create_pack(
 
     missing_images: list[int] = []
     count = len(chapters)
-    chime: Path | None = None
+    chime = audios_dir / "s0.mp3"
+    make_chime(chime)
+    shutil.copy2(chime, audios_dir / f"s{2 * count + 1}.mp3")
+
     for index, chapter in enumerate(chapters):
-        play = count + index
+        number = index + 1
+        play = count + number
         audio_source = source_dir / chapter["file"]
         if not audio_source.is_file():
             raise FileNotFoundError(
@@ -173,28 +199,39 @@ def create_pack(
         shutil.copy2(audio_source, audios_dir / f"s{play}.mp3")
 
         # Annonce du chapitre dans le menu : la voix enregistrée si elle
-        # existe, sinon le carillon. Un fichier par scène, jamais partagé,
-        # comme dans les histoires installées.
+        # existe, sinon le carillon. Un fichier par scène, comme dans les
+        # histoires installées.
         announced = chapter_audios.get(index)
         if announced is not None and Path(announced).is_file():
-            shutil.copy2(announced, audios_dir / f"s{index}.mp3")
-        elif chime is None:
-            chime = audios_dir / f"s{index}.mp3"
-            make_chime(chime)
+            shutil.copy2(announced, audios_dir / f"s{number}.mp3")
         else:
-            shutil.copy2(chime, audios_dir / f"s{index}.mp3")
+            shutil.copy2(chime, audios_dir / f"s{number}.mp3")
 
         image_name = chapter.get("image") or (Path(chapter["file"]).stem + ".png")
         image_source = source_dir / image_name
         if image_source.is_file():
-            shutil.copy2(image_source, images_dir / f"s{index}.png")
+            shutil.copy2(image_source, images_dir / f"s{number}.png")
             if show_image:
                 shutil.copy2(image_source, images_dir / f"s{play}.png")
         else:
-            missing_images.append(index + 1)
+            missing_images.append(number)
+
+    # Couverture fournie par l'utilisateur, sinon celle du premier chapitre.
+    # Elle sert de title.png et d'image aux scènes d'introduction et de fin.
+    first_image = images_dir / "s1.png"
+    if cover is not None and Path(cover).is_file():
+        cover_source: Path | None = Path(cover)
+    elif first_image.is_file():
+        cover_source = first_image
+    else:
+        cover_source = None
+    has_cover = cover_source is not None
+    if cover_source is not None:
+        shutil.copy2(cover_source, pack_dir / "title.png")
+        shutil.copy2(cover_source, images_dir / "s0.png")
 
     (pack_dir / "nodes.json").write_text(
-        json.dumps(build_nodes(count, show_image), indent=2) + "\n", encoding="utf-8"
+        json.dumps(build_nodes(count, show_image, has_cover), indent=2) + "\n", encoding="utf-8"
     )
     (pack_dir / "notes.json").write_text(
         json.dumps(build_notes(chapters), indent=2, ensure_ascii=False) + "\n",
@@ -215,17 +252,6 @@ def create_pack(
     (pack_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-
-    # Couverture fournie par l'utilisateur, sinon celle du premier chapitre
-    first_image = images_dir / "s0.png"
-    if cover is not None and Path(cover).is_file():
-        shutil.copy2(cover, pack_dir / "title.png")
-        has_cover = True
-    elif first_image.is_file():
-        shutil.copy2(first_image, pack_dir / "title.png")
-        has_cover = True
-    else:
-        has_cover = False
 
     silent_title = title_audio is None
     if title_audio is not None:
