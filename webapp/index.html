@@ -172,6 +172,12 @@
       <span>Assembler le pack Telmi
         <em>Dossier prêt à copier avec Telmi Sync.</em></span>
     </label>
+    <label class="check">
+      <input type="checkbox" id="opt-showimage" checked>
+      <span>Afficher l'image pendant l'écoute
+        <em>Décochez pour que l'écran s'éteigne pendant chaque chapitre :
+        la batterie dure bien plus longtemps.</em></span>
+    </label>
 
     <div class="extras">
       <div class="extra">
@@ -195,6 +201,14 @@
         <p class="status" id="title-audio-status" hidden></p>
         <audio id="title-audio-preview" controls hidden></audio>
       </div>
+    </div>
+
+    <div class="extra chapters-audio">
+      <h3>Annonces des chapitres</h3>
+      <p class="hint">Dans le menu de la Telmi, chaque chapitre s'annonce par un
+         petit carillon. Pour l'annoncer de votre voix, enregistrez-le ici —
+         seulement ceux que vous voulez.</p>
+      <div id="chapter-audios"></div>
     </div>
 
     <label class="check" id="install-row" hidden>

@@ -414,6 +414,12 @@ def generate_worker(params: dict) -> None:
                 title_audio=titre if titre.is_file() else None,
                 cover=couverture if couverture.is_file() else None,
                 identifier=identifiant,
+                show_image=bool(params.get("show_image", True)),
+                chapter_audios={
+                    index: workdir / "titres" / f"t{index}.mp3"
+                    for index in range(len(chapters))
+                    if (workdir / "titres" / f"t{index}.mp3").is_file()
+                },
             )
 
             if params.get("install"):
@@ -581,6 +587,33 @@ def api_title_audio(params: dict) -> dict:
     return {"ok": True, "name": "titre.mp3"}
 
 
+def api_chapter_audio(params: dict) -> dict:
+    """Enregistre l'annonce d'un chapitre pour le menu, convertie en MP3."""
+    state = snapshot(STATE)
+    if not state["workdir"]:
+        return {"error": "Analysez d'abord un film."}
+    try:
+        index = int(params.get("index", -1))
+    except (TypeError, ValueError):
+        return {"error": "Chapitre invalide."}
+    if not 0 <= index < len(state["chapters"]):
+        return {"error": "Chapitre inconnu."}
+
+    dossier = Path(state["workdir"]) / "titres"
+    try:
+        contenu = decode_upload(params)
+        dossier.mkdir(parents=True, exist_ok=True)
+        brut = dossier / f"t{index}_source"
+        brut.write_bytes(contenu)
+        convert_to_mp3(brut, dossier / f"t{index}.mp3")
+        brut.unlink(missing_ok=True)
+    except RuntimeError as erreur:
+        return {"error": str(erreur)}
+    except Exception:
+        return {"error": "Cet enregistrement n'a pas pu être converti."}
+    return {"ok": True, "index": index, "name": f"t{index}.mp3"}
+
+
 def _srt_time(seconds: float) -> str:
     millis = int(round(seconds * 1000))
     hours, rest = divmod(millis, 3_600_000)
@@ -732,6 +765,9 @@ def api_segment(params: dict) -> dict:
 
     with LOCK:
         STATE["chapters"] = chapters
+    # Les annonces enregistrées étaient liées à l'ancien découpage
+    if state["workdir"]:
+        shutil.rmtree(Path(state["workdir"]) / "titres", ignore_errors=True)
     return {
         "chapters": [
             {**chapter,
@@ -812,6 +848,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(api_cover(payload))
         if route == "/api/title-audio":
             return self._send_json(api_title_audio(payload))
+        if route == "/api/chapter-audio":
+            return self._send_json(api_chapter_audio(payload))
         if route == "/api/choose":
             return self._send_json(api_choose(payload))
         if route == "/api/generate":
