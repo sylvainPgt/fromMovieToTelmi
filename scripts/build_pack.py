@@ -63,41 +63,42 @@ def pack_folder_name(title: str, age, identifier: str, category: str | None = No
            f"{folder_title(title)}_{identifier}"
 
 
-def build_nodes(
-    count: int, show_image: bool = True, menu_audios: list[str] | None = None,
-) -> dict:
+def build_nodes(count: int, show_image: bool = True) -> dict:
     """Construit le graphe d'une histoire à menu de chapitres.
 
-    L'action « menu » contient une scène par chapitre (image et courte
-    annonce) : tant que l'on n'a pas validé, les flèches passent d'un
-    chapitre à l'autre. Valider ouvre la scène d'écoute du chapitre, dont
-    la fin enchaîne automatiquement sur le chapitre suivant. La dernière
-    clôt l'histoire.
+    Conventions relevées dans les histoires Telmi installées : chaque scène
+    s'appelle sN et ses fichiers portent son nom (sN.mp3, sN.png), chaque
+    action s'appelle aN, et aucun fichier n'est partagé entre deux scènes.
 
-    Sans image sur la scène d'écoute (show_image à False), l'écran n'a rien
-    à afficher pendant l'audio : il s'éteint et la batterie dure plus.
+    Les scènes s0 à s(N-1) forment le menu (action a0) : image et courte
+    annonce, que l'on parcourt aux flèches tant que l'on n'a pas validé.
+    Valider ouvre la scène d'écoute s(N+i) par l'action a(i+1) ; sa fin
+    enchaîne sur le chapitre suivant, et la dernière clôt l'histoire.
+    Sans image sur la scène d'écoute, l'écran n'a rien à afficher.
     """
     stages: dict[str, dict] = {}
-    actions: dict[str, list] = {"menu": [{"stage": f"m{i}"} for i in range(count)]}
+    actions: dict[str, list] = {"a0": [{"stage": f"s{i}"} for i in range(count)]}
 
     for index in range(count):
         is_last = index == count - 1
-        menu_audio = menu_audios[index] if menu_audios else "chime.mp3"
-        stages[f"m{index}"] = {
+        play = count + index
+        stages[f"s{index}"] = {
             "image": f"s{index}.png",
-            "audio": menu_audio,
-            "ok": {"action": f"p{index}", "index": 0},
+            "audio": f"s{index}.mp3",
+            "ok": {"action": f"a{index + 1}", "index": 0},
             "home": {"action": "backAction", "index": 0},
             "control": {"ok": True, "home": True, "autoplay": False},
         }
-        stages[f"s{index}"] = {
-            "image": f"s{index}.png" if show_image else None,
-            "audio": f"s{index}.mp3",
-            "ok": None if is_last else {"action": f"p{index + 1}", "index": 0},
+        stages[f"s{play}"] = {
+            "image": f"s{play}.png" if show_image else None,
+            "audio": f"s{play}.mp3",
+            "ok": None if is_last else {"action": f"a{index + 2}", "index": 0},
             "home": {"action": "backAction", "index": 0},
-            "control": {"ok": not is_last, "home": True, "autoplay": not is_last},
+            # Comme la scène finale des histoires installées : plus
+            # d'enchaînement, mais le bouton OK reste actif
+            "control": {"ok": True, "home": True, "autoplay": not is_last},
         }
-        actions[f"p{index}"] = [{"stage": f"s{index}"}]
+        actions[f"a{index + 1}"] = [{"stage": f"s{play}"}]
 
     stages["backStage"] = {
         "image": None,
@@ -110,7 +111,7 @@ def build_nodes(
     actions["backChildAction"] = []
 
     return {
-        "startAction": {"action": "menu", "index": 0},
+        "startAction": {"action": "a0", "index": 0},
         "stages": stages,
         "actions": actions,
     }
@@ -130,8 +131,8 @@ def build_notes(chapters: list[dict]) -> dict:
             text = text[:497].rstrip() + "..."
         title = chapter.get("title") or f"Chapitre {index + 1}"
         color = NOTE_COLORS[index % len(NOTE_COLORS)]
-        notes[f"m{index}"] = {"title": f"Menu · {title}", "notes": "", "color": color}
-        notes[f"s{index}"] = {"title": title, "notes": text, "color": color}
+        notes[f"s{index}"] = {"title": f"Menu · {title}", "notes": "", "color": color}
+        notes[f"s{len(chapters) + index}"] = {"title": title, "notes": text, "color": color}
     notes["backStage"] = {"title": "Retour", "notes": "", "color": "blue"}
     return notes
 
@@ -159,38 +160,41 @@ def create_pack(
     images_dir.mkdir(parents=True, exist_ok=True)
 
     missing_images: list[int] = []
-    menu_audios: list[str] = []
+    count = len(chapters)
+    chime: Path | None = None
     for index, chapter in enumerate(chapters):
+        play = count + index
         audio_source = source_dir / chapter["file"]
         if not audio_source.is_file():
             raise FileNotFoundError(
                 f"Audio manquant : {audio_source}. "
                 "Lancez d'abord la découpe pour produire les MP3."
             )
-        shutil.copy2(audio_source, audios_dir / f"s{index}.mp3")
+        shutil.copy2(audio_source, audios_dir / f"s{play}.mp3")
 
         # Annonce du chapitre dans le menu : la voix enregistrée si elle
-        # existe, sinon le carillon partagé
+        # existe, sinon le carillon. Un fichier par scène, jamais partagé,
+        # comme dans les histoires installées.
         announced = chapter_audios.get(index)
         if announced is not None and Path(announced).is_file():
-            shutil.copy2(announced, audios_dir / f"m{index}.mp3")
-            menu_audios.append(f"m{index}.mp3")
+            shutil.copy2(announced, audios_dir / f"s{index}.mp3")
+        elif chime is None:
+            chime = audios_dir / f"s{index}.mp3"
+            make_chime(chime)
         else:
-            menu_audios.append("chime.mp3")
+            shutil.copy2(chime, audios_dir / f"s{index}.mp3")
 
         image_name = chapter.get("image") or (Path(chapter["file"]).stem + ".png")
         image_source = source_dir / image_name
         if image_source.is_file():
             shutil.copy2(image_source, images_dir / f"s{index}.png")
+            if show_image:
+                shutil.copy2(image_source, images_dir / f"s{play}.png")
         else:
             missing_images.append(index + 1)
 
-    if "chime.mp3" in menu_audios:
-        make_chime(audios_dir / "chime.mp3")
-
     (pack_dir / "nodes.json").write_text(
-        json.dumps(build_nodes(len(chapters), show_image, menu_audios), indent=2) + "\n",
-        encoding="utf-8",
+        json.dumps(build_nodes(count, show_image), indent=2) + "\n", encoding="utf-8"
     )
     (pack_dir / "notes.json").write_text(
         json.dumps(build_notes(chapters), indent=2, ensure_ascii=False) + "\n",
