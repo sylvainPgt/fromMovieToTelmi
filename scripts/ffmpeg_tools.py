@@ -187,6 +187,26 @@ def convert_to_mp3(
         raise RuntimeError(f"Conversion audio impossible :\n{stderr[-800:]}")
 
 
+def make_chime(destination: Path, sample_rate: int = 44100) -> None:
+    """Crée un court carillon à deux notes, pour annoncer un chapitre dans le menu."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Amplitude explicite (0.6, soit -4 dB) : le générateur « sine » sort
+    # bien trop bas pour être entendu à côté d'un chapitre de film.
+    note = "aevalsrc=0.6*sin(2*PI*{freq}*t):d={dur}:s={sr}:c=stereo"
+    stderr = run_ffmpeg([
+        "-y",
+        "-f", "lavfi", "-i", note.format(freq=659.25, dur=0.18, sr=sample_rate),
+        "-f", "lavfi", "-i", note.format(freq=880, dur=0.4, sr=sample_rate),
+        "-filter_complex",
+        "[0:a][1:a]concat=n=2:v=0:a=1,afade=t=in:d=0.02,afade=t=out:st=0.33:d=0.25",
+        "-ar", str(sample_rate), "-ac", "2",
+        "-c:a", "libmp3lame", "-b:a", "128k",
+        str(destination),
+    ])
+    if not destination.is_file() or destination.stat().st_size == 0:
+        raise RuntimeError(f"Création du carillon impossible :\n{stderr[-800:]}")
+
+
 def make_silent_mp3(destination: Path, duration: float = 1.0, sample_rate: int = 44100) -> None:
     """Crée un court MP3 silencieux (utilisé comme title.mp3 par défaut)."""
     destination.parent.mkdir(parents=True, exist_ok=True)

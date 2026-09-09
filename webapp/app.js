@@ -271,6 +271,7 @@ async function segment() {
 
   // Les chapitres ont changé : les propositions d'images ne valent plus rien
   $('galleries').innerHTML = '';
+  drawChapterAudios(data.chapters);
 
   const warn = $('cut-warn');
   if (data.weak > 0) {
@@ -294,6 +295,7 @@ $('build-btn').onclick = async () => {
     images: $('opt-images').checked,
     pack: $('opt-pack').checked,
     install: $('opt-install').checked && !$('install-row').hidden,
+    show_image: $('opt-showimage').checked,
   });
   if (!started.ok) return showError($('build-error'), started.error);
 
@@ -478,55 +480,115 @@ async function useTitleAudio(blob, working) {
 }
 
 /* Enregistrement au micro. Le navigateur autorise le micro sur 127.0.0.1,
-   considéré comme une origine sûre au même titre que https. */
-let recorder = null;
-let recordedChunks = [];
-let recordTimer = null;
+   considéré comme une origine sûre au même titre que https.
+   Un seul enregistrement à la fois, quel que soit le bouton. */
+let activeRecorder = null;
 
-$('rec-btn').onclick = async () => {
-  if (recorder && recorder.state === 'recording') {
-    recorder.stop();
-    return;
-  }
-  if (!navigator.mediaDevices?.getUserMedia) {
-    return setStatus($('title-audio-status'),
-      "Ce navigateur ne permet pas l'enregistrement. Choisissez un fichier audio.", true);
-  }
+function attachRecorder({ button, timeEl, statusEl, onBlob }) {
+  let recorder = null;
+  let chunks = [];
+  let timer = null;
 
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch (error) {
-    return setStatus($('title-audio-status'),
-      `Micro indisponible : ${error.name === 'NotAllowedError'
-        ? "l'accès a été refusé" : error.message}`, true);
-  }
+  button.onclick = async () => {
+    if (recorder && recorder.state === 'recording') {
+      recorder.stop();
+      return;
+    }
+    if (activeRecorder) {
+      return setStatus(statusEl, 'Un autre enregistrement est en cours.', true);
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      return setStatus(statusEl,
+        "Ce navigateur ne permet pas l'enregistrement. Choisissez un fichier audio.", true);
+    }
 
-  recordedChunks = [];
-  recorder = new MediaRecorder(stream);
-  recorder.ondataavailable = (event) => {
-    if (event.data.size) recordedChunks.push(event.data);
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      return setStatus(statusEl,
+        `Micro indisponible : ${error.name === 'NotAllowedError'
+          ? "l'accès a été refusé" : error.message}`, true);
+    }
+
+    chunks = [];
+    recorder = new MediaRecorder(stream);
+    activeRecorder = recorder;
+    recorder.ondataavailable = (event) => {
+      if (event.data.size) chunks.push(event.data);
+    };
+    recorder.onstop = async () => {
+      clearInterval(timer);
+      stream.getTracks().forEach((track) => track.stop());
+      activeRecorder = null;
+      button.textContent = '🎙 Enregistrer';
+      button.classList.remove('recording');
+      timeEl.hidden = true;
+      await onBlob(new Blob(chunks, { type: recorder.mimeType }));
+    };
+
+    recorder.start();
+    const startedAt = Date.now();
+    button.textContent = '⏹ Arrêter';
+    button.classList.add('recording');
+    timeEl.hidden = false;
+    timer = setInterval(() => {
+      timeEl.textContent = `${Math.round((Date.now() - startedAt) / 1000)} s`;
+    }, 250);
+    setStatus(statusEl, '', false);
   };
-  recorder.onstop = async () => {
-    clearInterval(recordTimer);
-    stream.getTracks().forEach((track) => track.stop());
-    $('rec-btn').textContent = '🎙 Enregistrer';
-    $('rec-btn').classList.remove('recording');
-    $('rec-time').hidden = true;
-    const blob = new Blob(recordedChunks, { type: recorder.mimeType });
-    await useTitleAudio(blob, "Conversion de l'enregistrement…");
-  };
+}
 
-  recorder.start();
-  const startedAt = Date.now();
-  $('rec-btn').textContent = '⏹ Arrêter';
-  $('rec-btn').classList.add('recording');
-  $('rec-time').hidden = false;
-  recordTimer = setInterval(() => {
-    $('rec-time').textContent = `${Math.round((Date.now() - startedAt) / 1000)} s`;
-  }, 250);
-  setStatus($('title-audio-status'), '', false);
-};
+attachRecorder({
+  button: $('rec-btn'), timeEl: $('rec-time'), statusEl: $('title-audio-status'),
+  onBlob: (blob) => useTitleAudio(blob, "Conversion de l'enregistrement…"),
+});
+
+/* ---------- Annonces des chapitres dans le menu ---------- */
+
+function drawChapterAudios(chapters) {
+  const container = $('chapter-audios');
+  container.innerHTML = '';
+  for (const chapter of chapters) {
+    const row = document.createElement('div');
+    row.className = 'chapter-row';
+
+    const who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = `Chapitre ${chapter.index + 1} · ${chapter.start_label}`;
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn';
+    button.textContent = '🎙 Enregistrer';
+
+    const timeEl = document.createElement('span');
+    timeEl.className = 'rec-time';
+    timeEl.hidden = true;
+    const statusEl = document.createElement('p');
+    statusEl.className = 'status';
+    statusEl.hidden = true;
+    const preview = document.createElement('audio');
+    preview.controls = true;
+    preview.hidden = true;
+
+    row.append(who, button, timeEl, statusEl, preview);
+    container.appendChild(row);
+
+    attachRecorder({
+      button, timeEl, statusEl,
+      onBlob: async (blob) => {
+        setStatus(statusEl, 'Conversion…', false);
+        const answer = await api('/api/chapter-audio',
+          { index: chapter.index, data: await readAsDataUrl(blob) });
+        if (answer.error) return setStatus(statusEl, answer.error, true);
+        setStatus(statusEl, 'Annonce enregistrée.', false);
+        preview.src = URL.createObjectURL(blob);
+        preview.hidden = false;
+      },
+    });
+  }
+}
 
 
 /* Telmi Sync range ses histoires dans un dossier de travail : si on le

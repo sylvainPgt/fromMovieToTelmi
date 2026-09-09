@@ -41,6 +41,10 @@ L'interface vous guide en quatre étapes :
 3. **Les images** — l'application propose une planche par chapitre et pré-sélectionne la plus lisible. Cliquez pour en choisir une autre. Étape facultative.
 4. **Le pack** — donnez un titre, choisissez une image de couverture, enregistrez l'annonce du titre au micro, et générez.
 
+Sur la Telmi, l'histoire s'ouvre sur un **menu des chapitres** : on les parcourt avec les flèches, chacun montrant son image et s'annonçant par un petit carillon — ou par votre voix, si vous avez enregistré son annonce à l'étape 4. Une fois un chapitre choisi, les suivants s'enchaînent tout seuls.
+
+Par défaut, l'image du chapitre reste affichée pendant l'écoute. Décochez « Afficher l'image pendant l'écoute » pour que l'écran s'éteigne à la place : la batterie tient alors bien plus longtemps.
+
 Si l'application trouve le dossier de Telmi Sync sur votre ordinateur, elle vous propose d'y **installer le pack directement**. Relancez ensuite Telmi Sync : l'histoire apparaît dans votre bibliothèque, prête à synchroniser sur la conteuse.
 
 Tout est écrit dans un dossier `<nom_du_film>_telmi/` à côté de votre film.

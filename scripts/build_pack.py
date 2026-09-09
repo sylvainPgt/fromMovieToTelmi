@@ -19,7 +19,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-from ffmpeg_tools import make_silent_mp3
+from ffmpeg_tools import make_chime, make_silent_mp3
 
 # Longueur à laquelle Telmi Sync tronque le titre dans le nom de dossier,
 # déduite des histoires déjà installées (deux s'arrêtent net à 32 caractères)
@@ -63,25 +63,41 @@ def pack_folder_name(title: str, age, identifier: str, category: str | None = No
            f"{folder_title(title)}_{identifier}"
 
 
-def build_nodes(count: int) -> dict:
-    """Construit le graphe d'une histoire linéaire de `count` chapitres.
+def build_nodes(
+    count: int, show_image: bool = True, menu_audios: list[str] | None = None,
+) -> dict:
+    """Construit le graphe d'une histoire à menu de chapitres.
 
-    L'action aN mène à la scène sN ; la scène sN enchaîne sur l'action
-    a(N+1) à la fin de son audio. La dernière scène n'a pas de suite.
+    L'action « menu » contient une scène par chapitre (image et courte
+    annonce) : tant que l'on n'a pas validé, les flèches passent d'un
+    chapitre à l'autre. Valider ouvre la scène d'écoute du chapitre, dont
+    la fin enchaîne automatiquement sur le chapitre suivant. La dernière
+    clôt l'histoire.
+
+    Sans image sur la scène d'écoute (show_image à False), l'écran n'a rien
+    à afficher pendant l'audio : il s'éteint et la batterie dure plus.
     """
     stages: dict[str, dict] = {}
-    actions: dict[str, list] = {}
+    actions: dict[str, list] = {"menu": [{"stage": f"m{i}"} for i in range(count)]}
 
     for index in range(count):
         is_last = index == count - 1
-        stages[f"s{index}"] = {
+        menu_audio = menu_audios[index] if menu_audios else "chime.mp3"
+        stages[f"m{index}"] = {
             "image": f"s{index}.png",
+            "audio": menu_audio,
+            "ok": {"action": f"p{index}", "index": 0},
+            "home": {"action": "backAction", "index": 0},
+            "control": {"ok": True, "home": True, "autoplay": False},
+        }
+        stages[f"s{index}"] = {
+            "image": f"s{index}.png" if show_image else None,
             "audio": f"s{index}.mp3",
-            "ok": None if is_last else {"action": f"a{index + 1}", "index": 0},
+            "ok": None if is_last else {"action": f"p{index + 1}", "index": 0},
             "home": {"action": "backAction", "index": 0},
             "control": {"ok": not is_last, "home": True, "autoplay": not is_last},
         }
-        actions[f"a{index}"] = [{"stage": f"s{index}"}]
+        actions[f"p{index}"] = [{"stage": f"s{index}"}]
 
     stages["backStage"] = {
         "image": None,
@@ -94,7 +110,7 @@ def build_nodes(count: int) -> dict:
     actions["backChildAction"] = []
 
     return {
-        "startAction": {"action": "a0", "index": 0},
+        "startAction": {"action": "menu", "index": 0},
         "stages": stages,
         "actions": actions,
     }
@@ -112,11 +128,10 @@ def build_notes(chapters: list[dict]) -> dict:
         text = (chapter.get("text") or "").strip()
         if len(text) > 500:
             text = text[:497].rstrip() + "..."
-        notes[f"s{index}"] = {
-            "title": chapter.get("title") or f"Chapitre {index + 1}",
-            "notes": text,
-            "color": NOTE_COLORS[index % len(NOTE_COLORS)],
-        }
+        title = chapter.get("title") or f"Chapitre {index + 1}"
+        color = NOTE_COLORS[index % len(NOTE_COLORS)]
+        notes[f"m{index}"] = {"title": f"Menu · {title}", "notes": "", "color": color}
+        notes[f"s{index}"] = {"title": title, "notes": text, "color": color}
     notes["backStage"] = {"title": "Retour", "notes": "", "color": "blue"}
     return notes
 
@@ -125,20 +140,26 @@ def create_pack(
     chapters: list[dict], source_dir: Path, pack_dir: Path, title: str,
     age: str = "5", category: str | None = None, description: str | None = None,
     title_audio: Path | None = None, cover: Path | None = None,
-    identifier: str | None = None,
+    identifier: str | None = None, show_image: bool = True,
+    chapter_audios: dict[int, Path] | None = None,
 ) -> dict:
     """Écrit le pack complet sur le disque.
+
+    chapter_audios associe un numéro de chapitre (à partir de 0) à un audio
+    qui l'annonce dans le menu ; les autres reçoivent un carillon commun.
 
     Retourne un compte rendu : chapitres sans image, et si title.mp3 est
     resté un simple silence. Lève FileNotFoundError si un audio manque.
     """
     identifier = identifier or telmi_uuid()
+    chapter_audios = chapter_audios or {}
     audios_dir = pack_dir / "audios"
     images_dir = pack_dir / "images"
     audios_dir.mkdir(parents=True, exist_ok=True)
     images_dir.mkdir(parents=True, exist_ok=True)
 
     missing_images: list[int] = []
+    menu_audios: list[str] = []
     for index, chapter in enumerate(chapters):
         audio_source = source_dir / chapter["file"]
         if not audio_source.is_file():
@@ -148,6 +169,15 @@ def create_pack(
             )
         shutil.copy2(audio_source, audios_dir / f"s{index}.mp3")
 
+        # Annonce du chapitre dans le menu : la voix enregistrée si elle
+        # existe, sinon le carillon partagé
+        announced = chapter_audios.get(index)
+        if announced is not None and Path(announced).is_file():
+            shutil.copy2(announced, audios_dir / f"m{index}.mp3")
+            menu_audios.append(f"m{index}.mp3")
+        else:
+            menu_audios.append("chime.mp3")
+
         image_name = chapter.get("image") or (Path(chapter["file"]).stem + ".png")
         image_source = source_dir / image_name
         if image_source.is_file():
@@ -155,8 +185,12 @@ def create_pack(
         else:
             missing_images.append(index + 1)
 
+    if "chime.mp3" in menu_audios:
+        make_chime(audios_dir / "chime.mp3")
+
     (pack_dir / "nodes.json").write_text(
-        json.dumps(build_nodes(len(chapters)), indent=2) + "\n", encoding="utf-8"
+        json.dumps(build_nodes(len(chapters), show_image, menu_audios), indent=2) + "\n",
+        encoding="utf-8",
     )
     (pack_dir / "notes.json").write_text(
         json.dumps(build_notes(chapters), indent=2, ensure_ascii=False) + "\n",
@@ -223,7 +257,20 @@ def main() -> None:
         "--title-audio", type=Path, default=None,
         help="MP3 annonçant le titre. Sans lui, un court silence est mis en place.",
     )
+    parser.add_argument(
+        "--screen-off", action="store_true",
+        help="N'affiche pas l'image pendant l'écoute d'un chapitre : l'écran "
+             "s'éteint et la batterie dure plus longtemps.",
+    )
     args = parser.parse_args()
+
+    # Annonces de chapitres enregistrées à la main : titres/t0.mp3, t1.mp3...
+    # à côté du manifeste. Les chapitres sans annonce reçoivent un carillon.
+    titres = args.manifest.parent / "titres"
+    chapter_audios = {
+        index: titres / f"t{index}.mp3"
+        for index in range(10_000) if (titres / f"t{index}.mp3").is_file()
+    } if titres.is_dir() else {}
 
     if not args.manifest.is_file():
         sys.exit(f"Erreur : fichier introuvable : {args.manifest}")
@@ -240,6 +287,7 @@ def main() -> None:
         report = create_pack(
             chapters, args.manifest.parent, args.output, args.title,
             args.age, args.category, args.description, args.title_audio,
+            show_image=not args.screen_off, chapter_audios=chapter_audios,
         )
     except FileNotFoundError as e:
         sys.exit(f"Erreur : {e}")
