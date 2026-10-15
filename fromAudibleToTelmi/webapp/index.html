@@ -73,6 +73,20 @@
   <section class="card" id="step-cut" hidden>
     <h2><span class="num">2</span> Les chapitres</h2>
 
+    <div class="split" id="split-box" hidden>
+      <label class="check">
+        <input type="checkbox" id="opt-split">
+        <span>Une histoire par tome
+          <em>Pour une compilation : chaque tome devient une histoire à part sur
+          la Telmi, avec son titre et son image.</em></span>
+      </label>
+      <div id="volumes-box" hidden>
+        <p class="hint" id="volumes-hint">Cochez les chapitres du livre qui ouvrent
+           une nouvelle histoire.</p>
+        <div class="volume-list" id="volume-list"></div>
+      </div>
+    </div>
+
     <div class="modes">
       <label class="check">
         <input type="radio" name="mode" value="livre" id="mode-livre">
@@ -130,9 +144,6 @@
   <section class="card" id="step-build" hidden>
     <h2><span class="num">3</span> Le pack</h2>
 
-    <label class="inline">Titre de l'histoire
-      <input type="text" id="opt-title" placeholder="Le titre lu par la Telmi">
-    </label>
     <label class="inline">Âge conseillé
       <input type="number" id="opt-age" value="7" min="1" max="12">
     </label>
@@ -155,29 +166,11 @@
         longtemps.</em></span>
     </label>
 
-    <div class="extras">
-      <div class="extra">
-        <h3>Image de couverture</h3>
-        <p class="hint">Celle du livre est reprise d'office, posée entière sur
-           un fond flouté. Choisissez-en une autre si vous préférez.</p>
-        <input type="file" id="opt-cover" accept="image/*">
-        <p class="status" id="cover-status" hidden></p>
-        <img class="preview" id="cover-preview" hidden alt="Aperçu de la couverture">
-      </div>
-
-      <div class="extra">
-        <h3>Annonce du titre</h3>
-        <p class="hint">La voix qui annonce l'histoire. Enregistrez-la au micro,
-           ou choisissez un fichier audio. Sans rien, un court silence est mis.</p>
-        <div class="recorder">
-          <button class="btn" id="rec-btn">🎙 Enregistrer</button>
-          <span class="rec-time" id="rec-time" hidden>0 s</span>
-        </div>
-        <input type="file" id="opt-title-audio" accept="audio/*">
-        <p class="status" id="title-audio-status" hidden></p>
-        <audio id="title-audio-preview" controls hidden></audio>
-      </div>
-    </div>
+    <h3 class="stories-title" id="stories-title">L'histoire</h3>
+    <p class="hint">Sans image choisie, la couverture du livre est reprise,
+       posée entière sur un fond flouté. Sans annonce enregistrée, le titre
+       est remplacé par un court silence.</p>
+    <div class="stories" id="stories"></div>
 
     <div class="extra chapters-audio">
       <h3>Annonces des chapitres</h3>
@@ -202,7 +195,7 @@
 
     <div id="result" hidden>
       <p class="done">✅ <strong>C'est prêt !</strong></p>
-      <p class="path" id="result-path"></p>
+      <ul class="packs" id="result-packs"></ul>
       <p class="warn" id="result-warn" hidden></p>
       <div class="thumbs" id="thumbs"></div>
     </div>

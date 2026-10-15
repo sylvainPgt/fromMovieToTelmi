@@ -1,7 +1,15 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const state = { book: null, analysed: false, hasChapters: false, browsing: null };
+const state = {
+  book: null, analysed: false, hasChapters: false, browsing: null,
+  bookTitle: '', bookChapters: [],
+  // Chapitres du livre (indices) qui ouvrent une nouvelle histoire
+  starts: new Set([0]),
+  // Titres proposés par la détection, puis saisis : clé = chapitre de départ
+  detectedTitles: {}, storyTitles: {},
+  volumes: [],
+};
 
 /* ---------- Utilitaires ---------- */
 
@@ -185,8 +193,22 @@ $('analyze-btn').onclick = async () => {
     const cover = $('book-cover');
     cover.hidden = !result.cover;
     if (result.cover) cover.src = thumbUrl(result.cover);
-    $('cover-preview').hidden = true;
-    setStatus($('cover-status'), '', false);
+    state.bookCover = result.cover;
+    state.bookTitle = result.title;
+    state.bookChapters = result.chapters;
+    state.storyTitles = {};
+    state.detectedTitles = {};
+    for (const volume of result.volumes) state.detectedTitles[volume.start] = volume.title;
+    state.starts = new Set(result.volumes.length ? result.volumes.map((v) => v.start) : [0]);
+    state.starts.add(0);
+    $('split-box').hidden = result.chapters.length < 2;
+    $('opt-split').checked = result.volumes.length > 1;
+    $('volumes-hint').textContent = result.volumes.length > 1
+      ? `${result.volumes.length} tomes repérés d'après les titres des chapitres. `
+        + 'Vérifiez : cochez les chapitres qui ouvrent une nouvelle histoire.'
+      : 'Aucun tome repéré dans les titres. Cochez les chapitres qui ouvrent '
+        + 'une nouvelle histoire.';
+    drawVolumeList();
 
     const body = $('book-table').querySelector('tbody');
     body.innerHTML = '';
@@ -205,7 +227,6 @@ $('analyze-btn').onclick = async () => {
     // Sans chapitres, seul le mode « durée » a un sens
     $('mode-livre').disabled = !state.hasChapters;
     if (!state.hasChapters) $('mode-duree').checked = true;
-    $('opt-title').value = result.title;
     $('opt-from').value = '';
     $('opt-to').value = '';
 
@@ -268,6 +289,7 @@ async function segment() {
     boundary_weight: Number($('opt-weight').value),
     trim_start: $('opt-from').value,
     trim_end: $('opt-to').value,
+    volumes: splitting() ? [...state.starts] : [],
   });
   const body = $('cut-table').querySelector('tbody');
   body.innerHTML = '';
@@ -278,7 +300,20 @@ async function segment() {
   }
   showError($('cut-error'), '');
 
+  state.volumes = data.volumes;
+  const several = data.volumes.length > 1;
   for (const chapter of data.chapters) {
+    if (several && chapter.index === 0) {
+      const head = document.createElement('tr');
+      head.className = 'volume-head';
+      const td = document.createElement('td');
+      td.colSpan = 5;
+      const volume = data.volumes[chapter.volume];
+      td.textContent = `Histoire ${chapter.volume + 1} · ${storyTitle(volume)} · `
+        + `${volume.duration_label} · ${volume.chapters} chapitre${volume.chapters > 1 ? 's' : ''}`;
+      head.appendChild(td);
+      body.appendChild(head);
+    }
     const tr = document.createElement('tr');
     for (const value of [chapter.index + 1, chapter.start_label, chapter.duration_label]) {
       const td = document.createElement('td');
@@ -299,6 +334,7 @@ async function segment() {
     body.appendChild(tr);
   }
 
+  drawStories(data.volumes);
   drawChapterAudios(data.chapters);
 
   const warn = $('cut-warn');
@@ -321,7 +357,7 @@ async function segment() {
 
 $('build-btn').onclick = async () => {
   const started = await api('/api/generate', {
-    title: $('opt-title').value,
+    titles: Object.fromEntries(state.volumes.map((v) => [v.index, storyTitle(v)])),
     age: $('opt-age').value,
     category: $('opt-category').value,
     numbered: $('opt-numbered').checked,
@@ -335,16 +371,24 @@ $('build-btn').onclick = async () => {
   followJob($('build-progress'), $('build-error'), (result) => {
     $('build-btn').disabled = false;
     $('result').hidden = false;
-    $('result-path').textContent = result.pack.installed || result.pack.pack_dir;
+    const list = $('result-packs');
+    list.innerHTML = '';
+    for (const pack of result.packs) {
+      const item = document.createElement('li');
+      item.textContent = `${pack.title} → ${pack.installed || pack.pack_dir}`;
+      list.appendChild(item);
+    }
 
     const notes = [];
-    if (result.pack.install_error) notes.push(result.pack.install_error);
-    if (result.pack.installed) {
-      notes.push("Installé dans Telmi Sync : relancez-le pour voir l'histoire apparaître.");
+    if (result.install_error) notes.push(result.install_error);
+    if (result.packs.some((p) => p.installed)) {
+      notes.push(`${result.packs.length > 1 ? `${result.packs.length} histoires installées`
+        : 'Installé'} dans Telmi Sync : relancez-le pour les voir apparaître.`);
     }
-    if (result.pack.silent_title) {
-      notes.push("title.mp3 est un silence d'une seconde : enregistrez l'annonce du "
-        + 'titre si vous le souhaitez.');
+    const silent = result.packs.filter((p) => p.silent_title).length;
+    if (silent) {
+      notes.push(`${silent > 1 ? `${silent} histoires n'ont` : "L'histoire n'a"} pas `
+        + "d'annonce du titre : un silence d'une seconde la remplace.");
     }
     const warn = $('result-warn');
     warn.textContent = notes.join(' ');
@@ -356,9 +400,11 @@ $('build-btn').onclick = async () => {
       const figure = document.createElement('figure');
       const img = document.createElement('img');
       img.src = thumbUrl(detail.name);
-      img.alt = `Chapitre ${detail.index + 1}`;
+      const label = result.packs.length > 1
+        ? `Histoire ${detail.volume + 1} · ${detail.index + 1}` : `Chapitre ${detail.index + 1}`;
+      img.alt = label;
       const caption = document.createElement('figcaption');
-      caption.textContent = `Chapitre ${detail.index + 1}`;
+      caption.textContent = label;
       figure.append(img, caption);
       thumbs.appendChild(figure);
     }
@@ -398,32 +444,6 @@ async function sendFile(route, blob, statusElement, working) {
     setStatus(statusElement, `Envoi impossible : ${error}`, true);
     return null;
   }
-}
-
-$('opt-cover').onchange = async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  const answer = await sendFile('/api/cover', file, $('cover-status'), 'Conversion…');
-  if (!answer) return;
-  setStatus($('cover-status'), 'Couverture prête : voici son rendu sur la Telmi.', false);
-  const preview = $('cover-preview');
-  preview.src = thumbUrl(answer.name);
-  preview.hidden = false;
-};
-
-$('opt-title-audio').onchange = async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  await useTitleAudio(file, 'Conversion du fichier…');
-};
-
-async function useTitleAudio(blob, working) {
-  const ok = await sendFile('/api/title-audio', blob, $('title-audio-status'), working);
-  if (!ok) return;
-  setStatus($('title-audio-status'), 'Annonce prête (MP3 44100 Hz).', false);
-  const preview = $('title-audio-preview');
-  preview.src = URL.createObjectURL(blob);
-  preview.hidden = false;
 }
 
 /* Enregistrement au micro. Le navigateur autorise le micro sur 127.0.0.1,
@@ -485,11 +505,6 @@ function attachRecorder({ button, timeEl, statusEl, onBlob }) {
   };
 }
 
-attachRecorder({
-  button: $('rec-btn'), timeEl: $('rec-time'), statusEl: $('title-audio-status'),
-  onBlob: (blob) => useTitleAudio(blob, "Conversion de l'enregistrement…"),
-});
-
 /* ---------- Annonces des chapitres dans le menu ---------- */
 
 function drawChapterAudios(chapters) {
@@ -501,7 +516,8 @@ function drawChapterAudios(chapters) {
 
     const who = document.createElement('span');
     who.className = 'who';
-    who.textContent = `${chapter.index + 1} · ${chapter.title}`;
+    who.textContent = (state.volumes.length > 1 ? `H${chapter.volume + 1} · ` : '')
+      + `${chapter.index + 1} · ${chapter.title}`;
 
     const button = document.createElement('button');
     button.type = 'button';
@@ -526,13 +542,168 @@ function drawChapterAudios(chapters) {
       onBlob: async (blob) => {
         setStatus(statusEl, 'Conversion…', false);
         const answer = await api('/api/chapter-audio',
-          { index: chapter.index, data: await readAsDataUrl(blob) });
+          { index: chapter.gindex, data: await readAsDataUrl(blob) });
         if (answer.error) return setStatus(statusEl, answer.error, true);
         setStatus(statusEl, 'Annonce enregistrée.', false);
         preview.src = URL.createObjectURL(blob);
         preview.hidden = false;
       },
     });
+  }
+}
+
+/* ---------- Plusieurs histoires : une par tome ---------- */
+
+function splitting() {
+  return !$('split-box').hidden && $('opt-split').checked;
+}
+
+$('opt-split').onchange = () => {
+  $('volumes-box').hidden = !splitting();
+  scheduleSegment();
+};
+
+function drawVolumeList() {
+  const container = $('volume-list');
+  container.innerHTML = '';
+  $('volumes-box').hidden = !splitting();
+  state.bookChapters.forEach((chapter, index) => {
+    const label = document.createElement('label');
+    label.classList.toggle('starts', state.starts.has(index));
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = state.starts.has(index);
+    // Le premier chapitre ouvre forcément la première histoire
+    box.disabled = index === 0;
+    box.onchange = () => {
+      if (box.checked) state.starts.add(index); else state.starts.delete(index);
+      label.classList.toggle('starts', box.checked);
+      scheduleSegment();
+    };
+    const num = Object.assign(document.createElement('span'),
+      { className: 'cnum', textContent: index + 1 });
+    const time = Object.assign(document.createElement('span'),
+      { className: 'time', textContent: chapter.start_label });
+    const title = Object.assign(document.createElement('span'),
+      { textContent: chapter.title });
+    label.append(box, num, time, title);
+    container.appendChild(label);
+  });
+}
+
+/* Titre d'une histoire : saisi, sinon proposé par la détection, sinon déduit. */
+function storyKey(volume) {
+  return state.volumes.length > 1 || splitting() ? volume.start_chapter : 'livre';
+}
+function storyTitle(volume) {
+  const key = storyKey(volume);
+  if (state.storyTitles[key] !== undefined) return state.storyTitles[key];
+  if (key === 'livre') return state.bookTitle;
+  const detected = state.detectedTitles[key];
+  if (detected) return detected;
+  const chapter = state.bookChapters[volume.start_chapter];
+  return chapter ? chapter.title : `Histoire ${volume.index + 1}`;
+}
+
+function drawStories(volumes) {
+  const container = $('stories');
+  container.innerHTML = '';
+  $('stories-title').textContent = volumes.length > 1
+    ? `Les ${volumes.length} histoires` : "L'histoire";
+
+  for (const volume of volumes) {
+    const card = document.createElement('div');
+    card.className = 'story';
+
+    const preview = document.createElement('img');
+    preview.className = 'preview';
+    preview.alt = `Image de l'histoire ${volume.index + 1}`;
+    const image = volume.preview || state.bookCover;
+    if (image) preview.src = thumbUrl(image); else preview.hidden = true;
+
+    const fields = document.createElement('div');
+    fields.className = 'fields';
+
+    const titleLabel = document.createElement('label');
+    titleLabel.className = 'inline';
+    titleLabel.textContent = volumes.length > 1 ? `Histoire ${volume.index + 1}` : 'Titre';
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.value = storyTitle(volume);
+    titleInput.oninput = () => { state.storyTitles[storyKey(volume)] = titleInput.value; };
+    titleLabel.appendChild(titleInput);
+
+    const meta = Object.assign(document.createElement('p'), {
+      className: 'meta',
+      textContent: `${volume.duration_label} · ${volume.chapters} chapitre`
+        + `${volume.chapters > 1 ? 's' : ''}`,
+    });
+
+    // Image : un bouton qui ouvre le sélecteur de fichier
+    const imageRow = document.createElement('div');
+    imageRow.className = 'row';
+    const picker = Object.assign(document.createElement('input'),
+      { type: 'file', accept: 'image/*', hidden: true });
+    const imageButton = Object.assign(document.createElement('button'),
+      { type: 'button', className: 'btn', textContent: '🖼 Choisir une image' });
+    imageButton.onclick = () => picker.click();
+    const imageStatus = Object.assign(document.createElement('p'),
+      { className: 'status', hidden: true });
+    picker.onchange = async () => {
+      const file = picker.files[0];
+      if (!file) return;
+      setStatus(imageStatus, 'Conversion…', false);
+      const answer = await api('/api/cover',
+        { volume: volume.index, data: await readAsDataUrl(file) });
+      if (answer.error) return setStatus(imageStatus, answer.error, true);
+      volume.preview = answer.name;
+      preview.src = thumbUrl(answer.name);
+      preview.hidden = false;
+      setStatus(imageStatus, 'Image retenue : voici son rendu sur la Telmi.', false);
+    };
+    imageRow.append(imageButton, picker, imageStatus);
+
+    // Annonce du titre : micro ou fichier
+    const voiceRow = document.createElement('div');
+    voiceRow.className = 'row';
+    const recButton = Object.assign(document.createElement('button'),
+      { type: 'button', className: 'btn', textContent: '🎙 Enregistrer' });
+    const recTime = Object.assign(document.createElement('span'),
+      { className: 'rec-time', hidden: true });
+    const voicePicker = Object.assign(document.createElement('input'),
+      { type: 'file', accept: 'audio/*', hidden: true });
+    const voiceButton = Object.assign(document.createElement('button'),
+      { type: 'button', className: 'btn', textContent: '📂 Fichier audio' });
+    voiceButton.onclick = () => voicePicker.click();
+    const voiceStatus = Object.assign(document.createElement('p'),
+      { className: 'status', hidden: !volume.has_title_audio,
+        textContent: volume.has_title_audio ? 'Annonce du titre enregistrée.' : '' });
+    const voicePreview = Object.assign(document.createElement('audio'),
+      { controls: true, hidden: true });
+    const useVoice = async (blob, working) => {
+      setStatus(voiceStatus, working, false);
+      const answer = await api('/api/title-audio',
+        { volume: volume.index, data: await readAsDataUrl(blob) });
+      if (answer.error) return setStatus(voiceStatus, answer.error, true);
+      volume.has_title_audio = true;
+      setStatus(voiceStatus, 'Annonce du titre enregistrée.', false);
+      voicePreview.src = URL.createObjectURL(blob);
+      voicePreview.hidden = false;
+    };
+    voicePicker.onchange = () => {
+      if (voicePicker.files[0]) useVoice(voicePicker.files[0], 'Conversion du fichier…');
+    };
+    attachRecorder({
+      button: recButton, timeEl: recTime, statusEl: voiceStatus,
+      onBlob: (blob) => useVoice(blob, "Conversion de l'enregistrement…"),
+    });
+    const voiceLabel = Object.assign(document.createElement('span'),
+      { className: 'meta', textContent: 'Annonce du titre :' });
+    voiceRow.append(voiceLabel, recButton, recTime, voiceButton, voicePicker);
+
+    fields.append(titleLabel, meta, imageRow, voiceRow, voiceStatus, voicePreview);
+    card.append(preview, fields);
+    container.appendChild(card);
   }
 }
 

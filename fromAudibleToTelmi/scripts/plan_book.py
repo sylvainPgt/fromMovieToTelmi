@@ -24,6 +24,7 @@ import argparse
 import bisect
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -38,6 +39,135 @@ SILENCE_CEILING = 0.8
 MERGE_DISTANCE = 1.0
 # Au-delà de cette durée, un chapitre du livre mérite qu'on cherche ses silences
 LONG_CHAPTER = 15 * 60
+# En mode « livre », un chapitre plus court (crédits, jingle) rejoint son voisin
+SHORT_CHAPTER = 90.0
+# Titres sans intérêt dans un menu dès qu'il y a autre chose à montrer
+FILLER_RE = re.compile(r"cr[ée]dits|g[ée]n[ée]rique|ouverture|opening|closing", re.I)
+
+
+VOLUME_RE = re.compile(
+    r"\b(?:tome|livre|volume|vol\.|book|partie|part|saison)\s*(\d+|[ivxlc]+)\b", re.I)
+CHAPTER_NUMBER_RE = re.compile(r"^\s*(?:chapitre|chapter|chap\.|ch\.)?\s*(\d+)\b", re.I)
+GENERIC_PREFIX_RE = re.compile(
+    r"^\s*(?:chapitre|chapter|chap\.|ch\.|partie|part)?\s*\d+\s*$", re.I)
+# Chapitres qui ouvrent un tome sans encore en faire partie par leur titre
+OPENING_RE = re.compile(
+    r"ouverture|introduction|\bintro\b|pr[ée]ambule|prologue|opening|"
+    r"g[ée]n[ée]rique(?! de fin)", re.I)
+
+
+def _prefix(title: str) -> str | None:
+    """« La Pierre de Jovénia - Chapitre 3 » → « La Pierre de Jovénia »."""
+    parts = re.split(r"\s+[-–—]\s+|\s*:\s+", title, maxsplit=1)
+    if len(parts) < 2:
+        return None
+    prefix = parts[0].strip()
+    return None if not prefix or GENERIC_PREFIX_RE.match(prefix) else prefix
+
+
+def _volume_title(title: str) -> str:
+    """« Les Légendaires, Tome 1 : La Pierre de Jovénia » → « Tome 1 : La Pierre de Jovénia »."""
+    match = VOLUME_RE.search(title)
+    if not match:
+        return title
+    number = match.group(1).upper()
+    rest = title[match.end():].strip(" :-–—,.")
+    name = _prefix(rest) or rest
+    if not name or GENERIC_PREFIX_RE.match(name) or CHAPTER_NUMBER_RE.match(name):
+        return f"Tome {number}"
+    return f"Tome {number} : {name}"
+
+
+def _changes(values: list) -> list[int]:
+    """Indices où la valeur (connue) change, en ignorant les valeurs absentes."""
+    starts, last = [0], None
+    for index, value in enumerate(values):
+        if value is None:
+            continue
+        if last is not None and value != last:
+            starts.append(index)
+        last = value
+    return starts
+
+
+def detect_volumes(chapters: list[dict]) -> list[dict]:
+    """Repère les tomes d'une compilation d'après les titres des chapitres.
+
+    Trois indices, essayés dans l'ordre :
+    1. un numéro de tome explicite (« Tome 3 », « Livre II ») ;
+    2. un préfixe commun qui change (« La Pierre de Jovénia - Chapitre 1 ») ;
+    3. une numérotation des chapitres qui repart à zéro.
+
+    Un chapitre d'ouverture (crédits, introduction) placé juste avant un
+    nouveau tome lui est rattaché. Retourne une liste de
+    {"start": indice du premier chapitre, "title": titre proposé} ; une
+    seule entrée si rien ne ressemble à une compilation.
+    """
+    titles = [c["title"] for c in chapters]
+    count = len(titles)
+    if count < 2:
+        return [{"start": 0, "title": ""}]
+
+    numbers = []
+    for title in titles:
+        match = VOLUME_RE.search(title)
+        numbers.append(match.group(1).lower() if match else None)
+    prefixes = [_prefix(t) for t in titles]
+
+    starts, kind = [0], None
+    by_number = _changes(numbers)
+    if len(by_number) >= 2:
+        starts, kind = by_number, "tome"
+    else:
+        by_prefix = _changes(prefixes)
+        # Un préfixe qui change à chaque chapitre n'est pas un nom de tome
+        if 2 <= len(by_prefix) <= count / 2:
+            starts, kind = by_prefix, "prefixe"
+        else:
+            last = None
+            for index, title in enumerate(titles):
+                match = CHAPTER_NUMBER_RE.match(title)
+                if not match:
+                    continue
+                value = int(match.group(1))
+                if last is not None and value <= last and index > starts[-1] + 1:
+                    starts.append(index)
+                last = value
+            kind = "numerotation" if len(starts) >= 2 else None
+
+    # Les crédits d'ouverture vont avec le tome qu'ils ouvrent
+    adjusted = [0]
+    for start in starts[1:]:
+        while start - 1 > adjusted[-1] and OPENING_RE.search(titles[start - 1]):
+            start -= 1
+        adjusted.append(start)
+
+    volumes = []
+    for position, start in enumerate(adjusted):
+        end = adjusted[position + 1] if position + 1 < len(adjusted) else count
+        title = ""
+        for index in range(start, end):
+            if OPENING_RE.search(titles[index]):
+                continue
+            if kind == "prefixe" and prefixes[index]:
+                title = prefixes[index]
+            elif kind == "tome" and numbers[index]:
+                title = _volume_title(titles[index])
+            break
+        volumes.append({"start": start, "title": title or (
+            f"Tome {position + 1}" if len(adjusted) > 1 else "")})
+    return volumes
+
+
+def volume_spans(chapters: list[dict], starts: list[int], duration: float) -> list[tuple[float, float]]:
+    """Début et fin, en secondes, de chaque tome."""
+    starts = sorted(set(s for s in starts if 0 <= s < len(chapters)) | {0})
+    spans = []
+    for position, start in enumerate(starts):
+        begin = 0.0 if position == 0 else chapters[start]["start"]
+        end = chapters[starts[position + 1]]["start"] if position + 1 < len(starts) else duration
+        spans.append((begin, end))
+    return spans
 
 
 def cut_label(quality: float) -> str:
@@ -146,7 +276,29 @@ def titles_between(chapters: list[dict], start: float, end: float) -> list[str]:
     return titles
 
 
+def merge_short(cuts: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Rattache les chapitres très courts (crédits, jingles) à leur voisin.
+
+    Le premier chapitre rejoint le suivant, les autres le précédent : des
+    crédits d'ouverture vont avec le début, des crédits de fin avec la fin.
+    """
+    cuts = list(cuts)
+    changed = True
+    while changed and len(cuts) > 2:
+        changed = False
+        for index in range(len(cuts) - 1):
+            if cuts[index + 1][0] - cuts[index][0] >= SHORT_CHAPTER:
+                continue
+            # Retire la coupe qui isole ce chapitre
+            del cuts[index + 1 if index == 0 else index]
+            changed = True
+            break
+    return cuts
+
+
 def describe(titles: list[str]) -> str:
+    meaningful = [t for t in titles if not FILLER_RE.search(t)]
+    titles = meaningful or titles
     if not titles:
         return ""
     if len(titles) == 1:
@@ -173,6 +325,7 @@ def plan_book(
         cuts = [(begin, 1.0)]
         cuts += [(c["start"], 1.0) for c in chapters if begin + MERGE_DISTANCE < c["start"] < finish - MERGE_DISTANCE]
         cuts.append((finish, 1.0))
+        cuts = merge_short(cuts)
     else:
         span = finish - begin
         if span <= target * (1 - tolerance):
@@ -217,6 +370,32 @@ def plan_book(
     return plan
 
 
+def encode_plan(book: dict, plan: list[dict], folder: Path, bitrate: str,
+                title: str, cover) -> None:
+    """Encode les chapitres d'un plan et écrit son chapters.json."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for chapter in plan:
+        extract_audio_segment(book["audio"], folder / chapter["file"],
+                              chapter["start"], chapter["duration"], bitrate=bitrate)
+        print(f"  ✅ {folder.name}/{chapter['file']}")
+    manifest = {
+        "source": str(book["audio"]),
+        "title": title,
+        "cover": str(cover) if cover else None,
+        "source_duration": round(book["duration"], 3),
+        "chapters": plan,
+    }
+    (folder / "chapters.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def print_plan(plan: list[dict]) -> None:
+    for chapter in plan:
+        print(f"  {chapter['index'] + 1:>3}  {format_time(chapter['start']):>8}  "
+              f"{format_time(chapter['duration']):>8}  {chapter['cut_label']:<16} "
+              f"{chapter['title']}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("book", type=Path, help="Dossier Libation du livre, ou son fichier audio")
@@ -225,6 +404,12 @@ def main() -> None:
     parser.add_argument("--mode", choices=("duree", "livre"), default="duree",
                         help="« livre » garde un chapitre Telmi par chapitre du livre ; "
                              "« duree » (défaut) vise une durée régulière")
+    parser.add_argument("--tomes", action="store_true",
+                        help="Compilation : une histoire par tome, chacune dans son "
+                             "sous-dossier (tomes repérés d'après les titres des chapitres)")
+    parser.add_argument("--tome-starts", default=None,
+                        help="Avec --tomes : numéros (à partir de 1) des chapitres du "
+                             "livre qui ouvrent un tome, ex. « 1,12,25 ». Remplace la détection.")
     parser.add_argument("-d", "--duration", type=float, default=600.0,
                         help="Durée visée pour un chapitre, en secondes (défaut : 600)")
     parser.add_argument("--tolerance", type=float, default=0.5,
@@ -260,41 +445,54 @@ def main() -> None:
         silences = detect_silences(book["audio"], args.noise, 0.6)
         print(f"  {len(silences)} silences trouvés.")
 
-    plan = plan_book(
-        book["duration"], book["chapters"], silences, args.duration, args.mode,
-        args.tolerance, args.boundary_weight,
-        begin=args.skip_start, finish=book["duration"] - args.skip_end,
-    )
+    begin, finish = args.skip_start, book["duration"] - args.skip_end
+    if args.tomes:
+        if args.tome_starts:
+            try:
+                starts = [int(v) - 1 for v in args.tome_starts.split(",") if v.strip()]
+            except ValueError:
+                sys.exit("Erreur : --tome-starts attend des numéros séparés par des virgules.")
+            volumes = [{"start": s, "title": f"Tome {k + 1}"} for k, s in enumerate(sorted(set(starts) | {0}))]
+        else:
+            volumes = detect_volumes(book["chapters"])
+        if len(volumes) < 2:
+            print("\n⚠️  Aucun tome repéré dans les titres des chapitres. Indiquez-les "
+                  "avec --tome-starts, en vous aidant de read_book.py.")
+        spans = volume_spans(book["chapters"], [v["start"] for v in volumes], book["duration"])
+        print(f"\n{len(volumes)} tome(s) :")
+        plans = []
+        for k, (volume, (v_begin, v_end)) in enumerate(zip(volumes, spans)):
+            plan = plan_book(book["duration"], book["chapters"], silences, args.duration,
+                             args.mode, args.tolerance, args.boundary_weight,
+                             begin=max(begin, v_begin), finish=min(finish, v_end))
+            plans.append(plan)
+            print(f"\n— {volume['title']} ({format_time(v_end - v_begin)}, "
+                  f"à partir du chapitre {volume['start'] + 1}) —")
+            print_plan(plan)
+        if args.preview:
+            print("\nMode aperçu : rien n'a été encodé.")
+            return
+        for k, (volume, plan) in enumerate(zip(volumes, plans)):
+            folder = args.output / f"tome_{k + 1:02d}"
+            encode_plan(book, plan, folder, args.bitrate, volume["title"], book["cover"])
+        print("\nTerminé. Pour chaque tome :")
+        print(f"  python scripts/make_images.py {args.output}/tome_01/chapters.json --cover image_du_tome.jpg")
+        print(f'  python scripts/build_pack.py {args.output}/tome_01/chapters.json -t "Titre du tome"')
+        return
+
+    plan = plan_book(book["duration"], book["chapters"], silences, args.duration,
+                     args.mode, args.tolerance, args.boundary_weight,
+                     begin=begin, finish=finish)
     if not plan:
         sys.exit("Erreur : aucun découpage possible. Assouplissez --tolerance "
                  "ou changez la durée visée.")
-
     print(f"\n{len(plan)} chapitres Telmi :\n")
-    for chapter in plan:
-        print(f"  {chapter['index'] + 1:>3}  {format_time(chapter['start']):>8}  "
-              f"{format_time(chapter['duration']):>8}  {chapter['cut_label']:<16} "
-              f"{chapter['title']}")
-
+    print_plan(plan)
     if args.preview:
         print("\nMode aperçu : rien n'a été encodé.")
         return
-
-    args.output.mkdir(parents=True, exist_ok=True)
     print(f"\nEncodage dans '{args.output}'...")
-    for chapter in plan:
-        extract_audio_segment(book["audio"], args.output / chapter["file"],
-                              chapter["start"], chapter["duration"], bitrate=args.bitrate)
-        print(f"  ✅ {chapter['file']}")
-
-    manifest = {
-        "source": str(book["audio"]),
-        "title": book["title"],
-        "cover": str(book["cover"]) if book["cover"] else None,
-        "source_duration": round(book["duration"], 3),
-        "chapters": plan,
-    }
-    (args.output / "chapters.json").write_text(
-        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    encode_plan(book, plan, args.output, args.bitrate, book["title"], book["cover"])
     print("\nTerminé. Étape suivante :")
     print(f'  python scripts/make_images.py {args.output}/chapters.json')
     print(f'  python scripts/build_pack.py {args.output}/chapters.json -t "{book["title"]}"')

@@ -36,7 +36,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from build_pack import create_pack, pack_folder_name, telmi_uuid  # noqa: E402
 from ffmpeg_tools import convert_to_mp3, detect_silences, extract_audio_segment  # noqa: E402
 from make_images import make_cover, make_images  # noqa: E402
-from plan_book import needs_silences, plan_book  # noqa: E402
+from plan_book import detect_volumes, needs_silences, plan_book, volume_spans  # noqa: E402
 from read_book import (  # noqa: E402
     AUDIO_EXTENSIONS, PROTECTED_EXTENSIONS, format_time, load_book,
 )
@@ -44,7 +44,7 @@ from read_book import (  # noqa: E402
 WEB_DIR = ROOT / "webapp"
 
 # Un seul livre à la fois : c'est un outil personnel, pas un service partagé
-STATE: dict = {"book": None, "silences": [], "chapters": [], "workdir": None}
+STATE: dict = {"book": None, "silences": [], "chapters": [], "volumes": [], "workdir": None}
 JOB: dict = {"state": "idle", "label": "", "progress": 0.0, "error": None, "result": None}
 LOCK = threading.Lock()
 
@@ -101,14 +101,17 @@ def analyze_worker(params: dict) -> None:
 
         with LOCK:
             STATE.update({"book": book, "silences": silences,
-                          "chapters": [], "workdir": workdir})
-        # Une couverture choisie pour un autre livre ne vaut plus
-        (workdir / "couverture_choisie.png").unlink(missing_ok=True)
+                          "chapters": [], "volumes": [], "workdir": workdir})
+        # Couvertures et annonces choisies lors d'une lecture précédente
+        for pattern in ("couverture_histoire_*", "apercu_histoire_*", "titre_histoire_*"):
+            for old in workdir.glob(pattern):
+                old.unlink(missing_ok=True)
 
         cover_name = None
         if book["cover"] is not None:
-            make_cover(book["cover"], workdir / "apercu_couverture.png")
-            cover_name = "apercu_couverture.png"
+            make_cover(book["cover"], workdir / "apercu_livre.png")
+            cover_name = "apercu_livre.png"
+        volumes = detect_volumes(book["chapters"]) if book["chapters"] else []
 
         set_job(
             state="done", label="Lecture terminée", progress=100.0,
@@ -126,6 +129,8 @@ def analyze_worker(params: dict) -> None:
                      "duration": c["end"] - c["start"]}
                     for c in book["chapters"]
                 ],
+                # Compilation repérée d'après les titres : une histoire par tome
+                "volumes": volumes if len(volumes) > 1 else [],
                 "workdir": str(workdir),
             },
         )
@@ -134,11 +139,18 @@ def analyze_worker(params: dict) -> None:
         set_job(state="error", error=str(error), label="", progress=0.0)
 
 
+def story_cover(workdir: Path, volume: int, book: dict):
+    """Image choisie pour cette histoire, sinon la couverture du livre."""
+    chosen = workdir / f"couverture_histoire_{volume}.png"
+    return chosen if chosen.is_file() else book["cover"]
+
+
 def generate_worker(params: dict) -> None:
-    """Encode les MP3, fabrique les images, puis assemble le pack."""
+    """Encode les MP3, fabrique les images, puis assemble un pack par histoire."""
     try:
         state = snapshot(STATE)
         chapters, book, workdir = state["chapters"], state["book"], state["workdir"]
+        volumes = state["volumes"]
         if not chapters:
             raise RuntimeError("Aucun découpage à générer.")
 
@@ -153,64 +165,68 @@ def generate_worker(params: dict) -> None:
             set_job(progress=100.0 * (position + 1) / total,
                     label=f"Encodage du chapitre {position + 1} sur {total}...")
 
-        set_job(label="Images des chapitres...", progress=0.0)
-        chosen = workdir / "couverture_choisie.png"
-        cover_source = chosen if chosen.is_file() else book["cover"]
-        details = make_images(chapters, workdir, cover_source,
-                              numbered=bool(params.get("numbered", True)))
-        pack_cover = workdir / "couverture.png"
-        has_cover = make_cover(cover_source, pack_cover)
-
-        manifest = {
-            "source": str(book["audio"]),
-            "title": book["title"],
-            "cover": str(cover_source) if cover_source else None,
-            "source_duration": round(book["duration"], 3),
-            "chapters": chapters,
-        }
-        (workdir / "chapters.json").write_text(
-            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-        set_job(label="Assemblage du pack Telmi...", progress=50.0)
-        titre = workdir / "titre.mp3"
-        nom_histoire = params.get("title") or book["title"]
+        titles = params.get("titles") or {}
         age = str(params.get("age", "7"))
         categorie = (params.get("category") or "Livres audio").strip()
-        identifiant = telmi_uuid()
-        pack_dir = workdir / pack_folder_name(nom_histoire, age, identifiant, categorie)
-        pack_report = create_pack(
-            chapters, workdir, pack_dir,
-            title=nom_histoire, age=age, category=categorie,
-            description=book.get("description") or None,
-            title_audio=titre if titre.is_file() else None,
-            cover=pack_cover if has_cover else None,
-            identifier=identifiant,
-            show_image=bool(params.get("show_image", True)),
-            chapter_audios={
-                index: workdir / "titres" / f"t{index}.mp3"
-                for index in range(total)
-                if (workdir / "titres" / f"t{index}.mp3").is_file()
-            },
-        )
+        destination = telmi_stories_dir() if params.get("install") else None
+        packs, all_images = [], []
 
-        if params.get("install"):
-            destination = telmi_stories_dir()
-            if destination is None:
-                pack_report["installed"] = None
-                pack_report["install_error"] = (
-                    "Dossier de Telmi Sync introuvable : copiez le pack "
-                    "vous-même dans .telmi/stories."
-                )
-            else:
-                cible = destination / pack_dir.name
-                shutil.rmtree(cible, ignore_errors=True)
-                shutil.copytree(pack_dir, cible)
-                pack_report["installed"] = str(cible)
+        for volume, info in enumerate(volumes):
+            set_job(label=f"Assemblage de l'histoire {volume + 1} sur {len(volumes)}...",
+                    progress=100.0 * volume / len(volumes))
+            own = [c for c in chapters if c["volume"] == volume]
+            cover_source = story_cover(workdir, volume, book)
+            images = make_images(own, workdir, cover_source,
+                                 numbered=bool(params.get("numbered", True)))
+            all_images += [{**image, "volume": volume} for image in images]
+            pack_cover = workdir / f"couverture_pack_{volume}.png"
+            has_cover = make_cover(cover_source, pack_cover)
 
+            nom_histoire = (titles.get(str(volume)) or info["title"] or book["title"]).strip()
+            (workdir / f"chapters_{volume + 1:02d}.json").write_text(json.dumps({
+                "source": str(book["audio"]), "title": nom_histoire,
+                "cover": str(cover_source) if cover_source else None,
+                "chapters": own,
+            }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+            titre = workdir / f"titre_histoire_{volume}.mp3"
+            identifiant = telmi_uuid()
+            # Deux packs créés dans la même milliseconde auraient le même identifiant
+            time.sleep(0.01)
+            pack_dir = workdir / pack_folder_name(nom_histoire, age, identifiant, categorie)
+            report = create_pack(
+                own, workdir, pack_dir,
+                title=nom_histoire, age=age, category=categorie,
+                description=book.get("description") or None,
+                title_audio=titre if titre.is_file() else None,
+                cover=pack_cover if has_cover else None,
+                identifier=identifiant,
+                show_image=bool(params.get("show_image", True)),
+                chapter_audios={
+                    c["index"]: workdir / "titres" / f"t{c['gindex']}.mp3"
+                    for c in own
+                    if (workdir / "titres" / f"t{c['gindex']}.mp3").is_file()
+                },
+            )
+            report["title"] = nom_histoire
+            if params.get("install"):
+                if destination is None:
+                    report["installed"] = None
+                else:
+                    cible = destination / pack_dir.name
+                    shutil.rmtree(cible, ignore_errors=True)
+                    shutil.copytree(pack_dir, cible)
+                    report["installed"] = str(cible)
+            packs.append(report)
+
+        install_error = None
+        if params.get("install") and destination is None:
+            install_error = ("Dossier de Telmi Sync introuvable : copiez les packs "
+                             "vous-même dans .telmi/stories.")
         set_job(
             state="done", label="Terminé", progress=100.0,
-            result={"workdir": str(workdir), "chapters": total,
-                    "images": details, "pack": pack_report},
+            result={"workdir": str(workdir), "chapters": total, "images": all_images,
+                    "packs": packs, "install_error": install_error},
         )
     except Exception as error:  # noqa: BLE001
         traceback.print_exc()
@@ -257,8 +273,19 @@ def decode_upload(params: dict) -> bytes:
     return contenu
 
 
+def read_volume(params: dict) -> int:
+    """Numéro d'histoire (à partir de 0) envoyé par la page."""
+    try:
+        volume = int(params.get("volume", 0))
+    except (TypeError, ValueError):
+        raise RuntimeError("Histoire invalide.")
+    if volume < 0 or volume > 99:
+        raise RuntimeError("Histoire invalide.")
+    return volume
+
+
 def api_cover(params: dict) -> dict:
-    """Remplace la couverture du livre par une image choisie."""
+    """Choisit l'image d'une histoire, à la place de la couverture du livre."""
     state = snapshot(STATE)
     if not state["workdir"]:
         return {"error": "Choisissez d'abord un livre."}
@@ -268,14 +295,16 @@ def api_cover(params: dict) -> dict:
 
         from PIL import Image
 
+        volume = read_volume(params)
+        chosen = workdir / f"couverture_histoire_{volume}.png"
         with Image.open(BytesIO(decode_upload(params))) as image:
-            image.convert("RGB").save(workdir / "couverture_choisie.png", "PNG")
-        make_cover(workdir / "couverture_choisie.png", workdir / "apercu_couverture.png")
+            image.convert("RGB").save(chosen, "PNG")
+        make_cover(chosen, workdir / f"apercu_histoire_{volume}.png")
     except RuntimeError as erreur:
         return {"error": str(erreur)}
     except Exception:
         return {"error": "Ce fichier n'est pas une image exploitable."}
-    return {"ok": True, "name": "apercu_couverture.png"}
+    return {"ok": True, "name": f"apercu_histoire_{volume}.png"}
 
 
 def api_title_audio(params: dict) -> dict:
@@ -285,15 +314,16 @@ def api_title_audio(params: dict) -> dict:
         return {"error": "Choisissez d'abord un livre."}
     workdir = Path(state["workdir"])
     try:
+        volume = read_volume(params)
         brut = workdir / "titre_source"
         brut.write_bytes(decode_upload(params))
-        convert_to_mp3(brut, workdir / "titre.mp3")
+        convert_to_mp3(brut, workdir / f"titre_histoire_{volume}.mp3")
         brut.unlink(missing_ok=True)
     except RuntimeError as erreur:
         return {"error": str(erreur)}
     except Exception:
         return {"error": "Cet enregistrement n'a pas pu être converti."}
-    return {"ok": True, "name": "titre.mp3"}
+    return {"ok": True}
 
 
 def api_chapter_audio(params: dict) -> dict:
@@ -408,7 +438,11 @@ def api_browse(path_value: str | None) -> dict:
 
 
 def api_segment(params: dict) -> dict:
-    """Recalcule le découpage. Instantané : tout est déjà en mémoire."""
+    """Recalcule le découpage. Instantané : tout est déjà en mémoire.
+
+    params["volumes"] liste les chapitres du livre (indices) qui ouvrent une
+    nouvelle histoire ; absent ou vide, tout le livre fait une seule histoire.
+    """
     state = snapshot(STATE)
     book = state["book"]
     if not book:
@@ -426,18 +460,51 @@ def api_segment(params: dict) -> dict:
     if finish <= begin:
         return {"error": "La fin de l'histoire doit venir après son début."}
 
-    chapters = plan_book(
-        duration, book["chapters"], state["silences"], target, mode,
-        tolerance=float(params.get("tolerance", 0.5)),
-        boundary_weight=float(params.get("boundary_weight", 0.4)),
-        begin=begin, finish=finish,
-    )
-    if not chapters:
-        return {"error": "Aucun découpage possible avec ces réglages. "
-                         "Assouplissez la régularité ou changez la durée visée."}
+    starts = [0]
+    if book["chapters"]:
+        try:
+            starts = sorted({0, *(int(v) for v in (params.get("volumes") or []))})
+        except (TypeError, ValueError):
+            return {"error": "Découpage en histoires invalide."}
+        starts = [s for s in starts if 0 <= s < len(book["chapters"])]
+    spans = (volume_spans(book["chapters"], starts, duration)
+             if book["chapters"] else [(0.0, duration)])
+
+    chapters, volumes = [], []
+    for volume, (v_begin, v_end) in enumerate(spans):
+        low, high = max(begin, v_begin), min(finish, v_end)
+        if high <= low:
+            return {"error": f"L'histoire {volume + 1} est vide : vérifiez le début "
+                             "et la fin retenus."}
+        plan = plan_book(
+            duration, book["chapters"], state["silences"], target, mode,
+            tolerance=float(params.get("tolerance", 0.5)),
+            boundary_weight=float(params.get("boundary_weight", 0.4)),
+            begin=low, finish=high,
+        )
+        if not plan:
+            return {"error": "Aucun découpage possible avec ces réglages. "
+                             "Assouplissez la régularité ou changez la durée visée."}
+        for chapter in plan:
+            # Noms de fichiers uniques d'une histoire à l'autre
+            stem = f"h{volume + 1:02d}_chapitre_{chapter['index'] + 1:02d}"
+            chapter.update({"volume": volume, "gindex": len(chapters),
+                            "file": f"{stem}.mp3", "image": f"{stem}.png"})
+            chapters.append(chapter)
+        preview = Path(state["workdir"]) / f"apercu_histoire_{volume}.png"
+        volumes.append({
+            "index": volume,
+            "start_chapter": starts[volume] if book["chapters"] else 0,
+            "title": "",
+            "duration_label": format_time(high - low),
+            "chapters": len(plan),
+            "preview": preview.name if preview.is_file() else None,
+            "has_title_audio": (Path(state["workdir"]) / f"titre_histoire_{volume}.mp3").is_file(),
+        })
 
     with LOCK:
         STATE["chapters"] = chapters
+        STATE["volumes"] = volumes
     # Les annonces enregistrées étaient liées à l'ancien découpage
     if state["workdir"]:
         shutil.rmtree(Path(state["workdir"]) / "titres", ignore_errors=True)
@@ -448,6 +515,7 @@ def api_segment(params: dict) -> dict:
              "duration_label": format_time(c["duration"])}
             for c in chapters
         ],
+        "volumes": volumes,
         "weak": sum(1 for c in chapters if c["cut_quality"] <= 0.0),
         "kept_label": format_time(finish - begin),
     }

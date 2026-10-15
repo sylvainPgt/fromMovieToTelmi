@@ -45,8 +45,14 @@ Un livre Audible arrive déjà découpé en chapitres, mais ils conviennent rare
    - **Garder les chapitres du livre**, un pour un ;
    - **Viser une durée** : les petits chapitres sont regroupés et les longs recoupés. Les fins de chapitre du livre sont les coupes préférées ; à l'intérieur d'un chapitre trop long, l'application coupe sur un silence. Le tableau se recalcule en direct et indique le contenu de chaque chapitre (« Chapitre 2 (suite) → Chapitre 3 »).
 
-   Indiquez aussi où l'histoire commence et finit, pour écarter le jingle Audible et les crédits.
-3. **Le pack** — titre, âge, couverture (celle du livre par défaut), annonce du titre au micro, et générez.
+   Indiquez aussi où l'histoire commence et finit, pour écarter le jingle Audible et les crédits. Les crédits de quelques secondes sont rattachés au chapitre voisin plutôt que de faire un chapitre à part.
+3. **Le pack** — âge, collection, puis pour chaque histoire : son titre, son image (la couverture du livre par défaut) et l'annonce du titre au micro. Générez.
+
+### 📦 Une compilation ? Une histoire par tome
+
+Pour un livre qui réunit plusieurs tomes (« Les Légendaires, Tomes 1-8 »), cochez **Une histoire par tome** à l'étape 2. L'application repère les tomes d'après les titres des chapitres (« Tome 3 », un nom de tome qui change, une numérotation qui repart à 1) et coche les chapitres qui ouvrent chaque tome. Corrigez d'un clic si besoin : la liste des chapitres du livre est affichée, cocher un chapitre y fait commencer une nouvelle histoire.
+
+Chaque tome devient une histoire à part sur la Telmi, avec son propre menu de chapitres, son titre et **son image** — à choisir pour chacune à l'étape 3. Un seul clic sur « Générer » produit tous les packs.
 
 Sur la Telmi, l'histoire se présente comme celles de la collection « Telmi - Histoires » : la couverture, puis un **menu des chapitres** que l'on parcourt à la molette. Comme toutes les images reprennent la couverture, chacune porte une **pastille numérotée** pour s'y retrouver. La couverture, souvent carrée, est posée entière sur un fond flouté plutôt que rognée : son titre reste lisible.
 
@@ -73,11 +79,13 @@ Chaque script accepte `--help`. Utilisez le Python de l'environnement isolé (`.
 python scripts/read_book.py "Libation/Books/Mon livre [B0XXXXXXXX]"
 
 # 2. Le découpage : d'abord un aperçu, qui n'encode rien
+#    (ajoutez --tomes pour une compilation : un sous-dossier tome_01, tome_02... par tome,
+#     et --tome-starts 1,24,51 pour imposer les chapitres qui ouvrent chaque tome)
 python scripts/plan_book.py "Libation/Books/Mon livre [B0XXXXXXXX]" -d 600 --skip-start 30 --preview
 #    puis la découpe réelle (ou --mode livre pour garder les chapitres tels quels)
 python scripts/plan_book.py "Libation/Books/Mon livre [B0XXXXXXXX]" -d 600 --skip-start 30 -o chapitres
 
-# 3. Les images, tirées de la couverture
+# 3. Les images, tirées de la couverture (ou d'une image à vous avec --cover)
 python scripts/make_images.py chapitres/chapters.json
 
 # 4. Le pack Telmi
