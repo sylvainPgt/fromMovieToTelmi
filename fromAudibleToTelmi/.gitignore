@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Fichiers produits (médias volumineux, livres personnels)
+*_telmi/
+chapitres/
+pack/
+*.m4b
+*.m4a
+*.mp3
+*.aax
+*.aaxc
+*.wav
+
+# Système
+.DS_Store
+Thumbs.db

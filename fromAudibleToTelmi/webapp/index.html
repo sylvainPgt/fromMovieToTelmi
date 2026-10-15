@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Story Maker from Audible</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%F0%9F%93%9A</text></svg>">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header class="top">
+  <h1>📚 Story Maker</h1>
+  <p>Transformez un livre audio Audible en histoire pour la Telmi</p>
+</header>
+
+<main>
+
+  <!-- Étape 1 : le livre -->
+  <section class="card" id="step-book">
+    <h2><span class="num">1</span> Le livre</h2>
+    <p class="hint">Choisissez le dossier que Libation a créé pour le livre
+       (« Titre [B0…] »), ou directement son fichier <code>.m4b</code> ou
+       <code>.mp3</code>. Un fichier <code>.aax</code> est encore protégé :
+       libérez-le d'abord dans Libation.</p>
+
+    <div class="pick">
+      <button class="btn" id="pick-btn">Choisir un livre…</button>
+      <span class="chosen" id="chosen">Aucun livre sélectionné</span>
+    </div>
+
+    <div class="options">
+      <details>
+        <summary>Réglages avancés</summary>
+        <label class="check">
+          <input type="checkbox" id="opt-silences">
+          <span>Repérer aussi les silences
+            <em>Fait d'office si le livre n'a pas de chapitres ou si l'un dure
+            plus d'un quart d'heure. Permet de couper proprement à l'intérieur
+            d'un chapitre. Une à deux minutes par heure d'écoute.</em></span>
+        </label>
+        <label class="inline">
+          Seuil de silence
+          <input type="range" id="opt-noise" min="-50" max="-20" step="1" value="-35">
+          <output id="out-noise">-35 dB</output>
+        </label>
+      </details>
+    </div>
+
+    <button class="btn primary" id="analyze-btn" disabled>Lire le livre</button>
+    <div class="progress" id="analyze-progress" hidden>
+      <div class="bar"><span></span></div>
+      <p class="label"></p>
+    </div>
+    <p class="error" id="analyze-error" hidden></p>
+
+    <div class="book" id="book-info" hidden>
+      <img class="preview" id="book-cover" alt="Couverture du livre" hidden>
+      <div>
+        <p class="summary" id="book-summary"></p>
+        <details>
+          <summary id="book-chapters-summary">Chapitres du livre</summary>
+          <div class="table-wrap"><table id="book-table">
+            <thead><tr><th>#</th><th>Début</th><th>Durée</th><th>Titre</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- Étape 2 : les chapitres Telmi -->
+  <section class="card" id="step-cut" hidden>
+    <h2><span class="num">2</span> Les chapitres</h2>
+
+    <div class="modes">
+      <label class="check">
+        <input type="radio" name="mode" value="livre" id="mode-livre">
+        <span>Garder les chapitres du livre
+          <em>Un chapitre Telmi par chapitre Audible, tels quels.</em></span>
+      </label>
+      <label class="check">
+        <input type="radio" name="mode" value="duree" id="mode-duree" checked>
+        <span>Viser une durée
+          <em>Regroupe les petits chapitres et recoupe les longs, de
+          préférence sur une fin de chapitre, sinon sur un silence.</em></span>
+      </label>
+    </div>
+
+    <div class="trim">
+      <label class="inline">
+        L'histoire commence à
+        <input type="text" id="opt-from" placeholder="0:00" size="8">
+      </label>
+      <label class="inline">
+        et se termine à
+        <input type="text" id="opt-to" placeholder="fin du livre" size="10">
+      </label>
+      <p class="hint">Pour écarter le jingle Audible ou les crédits. Format
+         <code>0:35</code> ou <code>1:52:12</code>. Laissez vide pour tout garder.</p>
+    </div>
+
+    <div class="sliders" id="duration-sliders">
+      <label class="inline">
+        Durée d'un chapitre
+        <input type="range" id="opt-target" min="120" max="1800" step="60" value="600">
+        <output id="out-target">10 min</output>
+      </label>
+      <label class="inline">
+        Régularité des chapitres
+        <input type="range" id="opt-tol" min="0.15" max="0.9" step="0.05" value="0.5">
+        <output id="out-tol">souple</output>
+      </label>
+      <label class="inline">
+        Priorité aux fins de chapitre
+        <input type="range" id="opt-weight" min="0" max="1" step="0.05" value="0.4">
+        <output id="out-weight">moyenne</output>
+      </label>
+    </div>
+
+    <p class="warn" id="cut-warn" hidden></p>
+    <p class="error" id="cut-error" hidden></p>
+    <div class="table-wrap"><table id="cut-table">
+      <thead><tr><th>#</th><th>Début</th><th>Durée</th><th>Coupe</th><th>Contenu</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <!-- Étape 3 : le pack -->
+  <section class="card" id="step-build" hidden>
+    <h2><span class="num">3</span> Le pack</h2>
+
+    <label class="inline">Titre de l'histoire
+      <input type="text" id="opt-title" placeholder="Le titre lu par la Telmi">
+    </label>
+    <label class="inline">Âge conseillé
+      <input type="number" id="opt-age" value="7" min="1" max="12">
+    </label>
+    <label class="inline">Collection
+      <input type="text" id="opt-category" value="Livres audio" size="20">
+      <span class="hint">Le préfixe du nom de dossier, comme « Radio France ».</span>
+    </label>
+
+    <label class="check">
+      <input type="checkbox" id="opt-numbered" checked>
+      <span>Numéroter les images du menu
+        <em>Toutes les images reprennent la couverture : une pastille avec le
+        numéro du chapitre aide à s'y retrouver.</em></span>
+    </label>
+    <label class="check">
+      <input type="checkbox" id="opt-showimage" checked>
+      <span>Afficher l'image pendant l'écoute
+        <em>Décochez pour que l'écran s'éteigne pendant chaque chapitre, comme
+        dans les histoires officielles de Telmi : la batterie dure bien plus
+        longtemps.</em></span>
+    </label>
+
+    <div class="extras">
+      <div class="extra">
+        <h3>Image de couverture</h3>
+        <p class="hint">Celle du livre est reprise d'office, posée entière sur
+           un fond flouté. Choisissez-en une autre si vous préférez.</p>
+        <input type="file" id="opt-cover" accept="image/*">
+        <p class="status" id="cover-status" hidden></p>
+        <img class="preview" id="cover-preview" hidden alt="Aperçu de la couverture">
+      </div>
+
+      <div class="extra">
+        <h3>Annonce du titre</h3>
+        <p class="hint">La voix qui annonce l'histoire. Enregistrez-la au micro,
+           ou choisissez un fichier audio. Sans rien, un court silence est mis.</p>
+        <div class="recorder">
+          <button class="btn" id="rec-btn">🎙 Enregistrer</button>
+          <span class="rec-time" id="rec-time" hidden>0 s</span>
+        </div>
+        <input type="file" id="opt-title-audio" accept="audio/*">
+        <p class="status" id="title-audio-status" hidden></p>
+        <audio id="title-audio-preview" controls hidden></audio>
+      </div>
+    </div>
+
+    <div class="extra chapters-audio">
+      <h3>Annonces des chapitres</h3>
+      <p class="hint">Dans le menu de la Telmi, chaque chapitre s'annonce par un
+         petit carillon. Pour l'annoncer de votre voix, enregistrez-le ici —
+         seulement ceux que vous voulez.</p>
+      <div id="chapter-audios"></div>
+    </div>
+
+    <label class="check" id="install-row" hidden>
+      <input type="checkbox" id="opt-install" checked>
+      <span>Installer directement dans Telmi Sync
+        <em id="install-path"></em></span>
+    </label>
+
+    <button class="btn primary" id="build-btn">Générer</button>
+    <div class="progress" id="build-progress" hidden>
+      <div class="bar"><span></span></div>
+      <p class="label"></p>
+    </div>
+    <p class="error" id="build-error" hidden></p>
+
+    <div id="result" hidden>
+      <p class="done">✅ <strong>C'est prêt !</strong></p>
+      <p class="path" id="result-path"></p>
+      <p class="warn" id="result-warn" hidden></p>
+      <div class="thumbs" id="thumbs"></div>
+    </div>
+  </section>
+
+</main>
+
+<!-- Explorateur de fichiers -->
+<div class="modal" id="browser" hidden>
+  <div class="modal-box">
+    <header>
+      <h3>Choisir un livre</h3>
+      <button class="icon" id="browser-close" aria-label="Fermer">✕</button>
+    </header>
+    <p class="crumb" id="browser-path"></p>
+    <div class="goto">
+      <input type="text" id="browser-goto" placeholder="Ou collez un chemin : C:\Users\vous\Libation\Books\…">
+      <button class="btn" id="browser-go">Ouvrir</button>
+    </div>
+    <button class="btn primary" id="browser-here" hidden>Prendre ce livre</button>
+    <p class="error" id="browser-error" hidden></p>
+    <ul class="listing" id="browser-list"></ul>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

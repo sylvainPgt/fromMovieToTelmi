@@ -1,0 +1,5 @@
+# Nécessaire pour l'application.
+# Installation : pip install -r requirements.txt
+Pillow>=10.0
+# Fournit un binaire FFmpeg si FFmpeg n'est pas dans le PATH
+imageio-ffmpeg>=0.4.9

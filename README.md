@@ -4,6 +4,8 @@ Transformez un film en histoire audio en plusieurs chapitres, prête pour la con
 
 Usage strictement personnel, à partir de vos propres films.
 
+> 📚 **Un livre audio Audible plutôt qu'un film ?** Voir le dossier [`fromAudibleToTelmi`](fromAudibleToTelmi/), qui part des livres libérés par Libation.
+
 ## 🚀 Démarrage rapide
 
 Deux étapes, et la seconde ne se fait qu'une fois.
