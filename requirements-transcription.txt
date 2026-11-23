@@ -2,3 +2,10 @@
 # Attention, cela installe PyTorch (2 à 3 Go de téléchargement).
 # Installation : pip install -r requirements-transcription.txt
 openai-whisper>=20231117
+
+# Planchers de sécurité pour des dépendances de whisper (osv-scanner) :
+# un environnement déjà installé ne les remonte pas tout seul.
+torch>=2.13.0
+tqdm>=4.66.3
+certifi>=2026.10.18
+idna>=3.15
